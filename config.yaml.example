@@ -1,0 +1,42 @@
+# Granola Bridge Configuration
+
+granola:
+  # Path to Granola's cache file
+  cache_path: "~/Library/Application Support/Granola/cache-v3.json"
+  # Debounce time for file watching (ms)
+  watch_debounce_ms: 500
+
+llm:
+  # OpenAI-compatible API endpoint (default: LMStudio)
+  base_url: "http://localhost:1234/v1"
+  # Model name (depends on what's loaded in LMStudio)
+  model: "local-model"
+  # Request timeout in seconds
+  timeout_seconds: 120
+
+trello:
+  # Trello API base URL (shouldn't need to change)
+  api_base_url: "https://api.trello.com/1"
+
+retry:
+  # Maximum retry attempts before giving up
+  max_attempts: 5
+  # Base delay for exponential backoff (seconds)
+  base_delay_seconds: 30
+
+web:
+  # Dashboard bind address
+  host: "127.0.0.1"
+  # Dashboard port
+  port: 8080
+
+notifications:
+  daily_summary:
+    # Enable daily summary notifications
+    enabled: true
+    # Time to send daily summary (24h format)
+    time: "09:00"
+
+database:
+  # SQLite database path
+  path: "~/.granola-bridge/bridge.db"

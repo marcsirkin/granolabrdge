@@ -1,0 +1,76 @@
+{% extends "base.html" %}
+
+{% block title %}Meetings - Granola Bridge{% endblock %}
+
+{% block content %}
+<div class="flex-between mb-2">
+    <h1>Meetings</h1>
+    <a href="/upload" class="btn btn-primary">Upload Transcript</a>
+</div>
+
+<div class="card">
+    {% if meetings %}
+    <table>
+        <thead>
+            <tr>
+                <th>Title</th>
+                <th>Source</th>
+                <th>Action Items</th>
+                <th>Date</th>
+                <th>Status</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for item in meetings %}
+            <tr>
+                <td>
+                    <a href="/meetings/{{ item.meeting.id }}">
+                        {{ item.meeting.title[:60] }}{% if item.meeting.title|length > 60 %}...{% endif %}
+                    </a>
+                </td>
+                <td>
+                    <span class="badge {% if item.meeting.source.value == 'granola' %}badge-info{% else %}badge-warning{% endif %}">
+                        {{ item.meeting.source.value }}
+                    </span>
+                </td>
+                <td>{{ item.action_count }}</td>
+                <td>{{ item.meeting.created_at.strftime('%Y-%m-%d %H:%M') }}</td>
+                <td>
+                    {% if item.meeting.processed_at %}
+                    <span class="badge badge-success">Processed</span>
+                    {% else %}
+                    <span class="badge badge-warning">Pending</span>
+                    {% endif %}
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+
+    {% if total_pages > 1 %}
+    <div class="pagination">
+        {% if page > 1 %}
+        <a href="?page={{ page - 1 }}&per_page={{ per_page }}">&laquo; Prev</a>
+        {% endif %}
+
+        {% for p in range(1, total_pages + 1) %}
+            {% if p == page %}
+            <a href="?page={{ p }}&per_page={{ per_page }}" class="active">{{ p }}</a>
+            {% elif p <= 3 or p > total_pages - 2 or (p >= page - 1 and p <= page + 1) %}
+            <a href="?page={{ p }}&per_page={{ per_page }}">{{ p }}</a>
+            {% elif p == 4 or p == total_pages - 2 %}
+            <span>...</span>
+            {% endif %}
+        {% endfor %}
+
+        {% if page < total_pages %}
+        <a href="?page={{ page + 1 }}&per_page={{ per_page }}">Next &raquo;</a>
+        {% endif %}
+    </div>
+    {% endif %}
+
+    {% else %}
+    <p>No meetings yet. Waiting for Granola data or <a href="/upload">upload a transcript</a>.</p>
+    {% endif %}
+</div>
+{% endblock %}

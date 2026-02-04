@@ -1,0 +1,94 @@
+{% extends "base.html" %}
+
+{% block title %}{{ meeting.title }} - Granola Bridge{% endblock %}
+
+{% block content %}
+<div class="flex-between mb-2">
+    <h1>{{ meeting.title }}</h1>
+    <a href="/meetings" class="btn btn-primary btn-sm">&larr; Back to Meetings</a>
+</div>
+
+{% if llm_pending %}
+<div class="card" style="background-color: var(--warning); color: #333;">
+    <strong>Meeting saved.</strong> LLM extraction is pending - the LLM service was unavailable.
+    <br>Use the "Process Unprocessed Meetings" button on the <a href="/">dashboard</a> when the LLM is available.
+</div>
+{% endif %}
+
+{% if not meeting.processed_at and not llm_pending %}
+<div class="card" style="background-color: #fff3cd; border-left: 4px solid var(--warning);">
+    <strong>Pending extraction.</strong> This meeting has not been processed yet.
+    <br>Action items will be extracted when the LLM becomes available.
+</div>
+{% endif %}
+
+<div class="card">
+    <h3>Meeting Details</h3>
+    <p><strong>Source:</strong>
+        <span class="badge {% if meeting.source.value == 'granola' %}badge-info{% else %}badge-warning{% endif %}">
+            {{ meeting.source.value }}
+        </span>
+    </p>
+    {% if meeting.meeting_date %}
+    <p><strong>Meeting Date:</strong> {{ meeting.meeting_date.strftime('%Y-%m-%d %H:%M') }}</p>
+    {% endif %}
+    <p><strong>Created:</strong> {{ meeting.created_at.strftime('%Y-%m-%d %H:%M') }}</p>
+    {% if meeting.processed_at %}
+    <p><strong>Processed:</strong> {{ meeting.processed_at.strftime('%Y-%m-%d %H:%M') }}</p>
+    {% endif %}
+    {% if meeting.granola_id %}
+    <p><strong>Granola ID:</strong> <code>{{ meeting.granola_id }}</code></p>
+    {% endif %}
+</div>
+
+<div class="card">
+    <h3>Action Items ({{ action_items|length }})</h3>
+
+    {% if action_items %}
+    <div class="action-list">
+        {% for item in action_items %}
+        <div class="action-item">
+            <div class="flex-between">
+                <div class="title">{{ item.title }}</div>
+                <span class="badge
+                    {% if item.status.value == 'sent' %}badge-success
+                    {% elif item.status.value == 'pending' %}badge-warning
+                    {% elif item.status.value == 'failed' %}badge-danger
+                    {% else %}badge-info{% endif %}">
+                    {{ item.status.value }}
+                </span>
+            </div>
+
+            {% if item.description %}
+            <p>{{ item.description }}</p>
+            {% endif %}
+
+            {% if item.context %}
+            <div class="context">{{ item.context }}</div>
+            {% endif %}
+
+            <div class="meta mt-2">
+                {% if item.assignee %}
+                <span><strong>Assignee:</strong> {{ item.assignee }}</span> &bull;
+                {% endif %}
+                {% if item.trello_card_url %}
+                <a href="{{ item.trello_card_url }}" target="_blank">View in Trello &rarr;</a>
+                {% elif item.error_message %}
+                <span style="color: var(--danger);">Error: {{ item.error_message[:100] }}</span>
+                {% endif %}
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+    {% else %}
+    <p>No action items found in this meeting.</p>
+    {% endif %}
+</div>
+
+<div class="card">
+    <details>
+        <summary style="cursor: pointer; font-weight: 600;">View Transcript</summary>
+        <div class="transcript mt-2">{{ meeting.transcript }}</div>
+    </details>
+</div>
+{% endblock %}

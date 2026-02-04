@@ -1,0 +1,119 @@
+{% extends "base.html" %}
+
+{% block title %}Dashboard - Granola Bridge{% endblock %}
+
+{% block content %}
+<h1>Dashboard</h1>
+
+<div class="stats-grid">
+    <div class="stat-card">
+        <div class="label">Meetings Today</div>
+        <div class="value">{{ stats.meetings_today }}</div>
+    </div>
+    <div class="stat-card">
+        <div class="label">Meetings This Week</div>
+        <div class="value">{{ stats.meetings_week }}</div>
+    </div>
+    <div class="stat-card">
+        <div class="label">Total Meetings</div>
+        <div class="value">{{ stats.total_meetings }}</div>
+    </div>
+    <div class="stat-card success">
+        <div class="label">Cards Created</div>
+        <div class="value">{{ stats.actions_sent }}</div>
+    </div>
+    <div class="stat-card warning">
+        <div class="label">Pending</div>
+        <div class="value">{{ stats.actions_pending }}</div>
+    </div>
+    <div class="stat-card {% if stats.actions_failed > 0 %}danger{% endif %}">
+        <div class="label">Failed</div>
+        <div class="value">{{ stats.actions_failed }}</div>
+    </div>
+</div>
+
+{% if stats.unprocessed_count > 0 %}
+<div class="card">
+    <div class="flex-between">
+        <div>
+            <h3>Unprocessed Meetings</h3>
+            <p>{{ stats.unprocessed_count }} meeting{% if stats.unprocessed_count != 1 %}s{% endif %} waiting for LLM extraction.</p>
+        </div>
+        <form action="/process-unprocessed" method="post" style="margin: 0;">
+            <button type="submit" class="btn btn-primary">
+                Process {{ stats.unprocessed_count }} Meeting{% if stats.unprocessed_count != 1 %}s{% endif %}
+            </button>
+        </form>
+    </div>
+</div>
+{% endif %}
+
+<div class="card">
+    <div class="flex-between mb-2">
+        <h2>Recent Meetings</h2>
+        <a href="/meetings" class="btn btn-primary btn-sm">View All</a>
+    </div>
+
+    {% if recent_meetings %}
+    <table>
+        <thead>
+            <tr>
+                <th>Title</th>
+                <th>Source</th>
+                <th>Date</th>
+                <th>Status</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for meeting in recent_meetings %}
+            <tr>
+                <td>
+                    <a href="/meetings/{{ meeting.id }}">{{ meeting.title[:60] }}{% if meeting.title|length > 60 %}...{% endif %}</a>
+                </td>
+                <td>
+                    <span class="badge {% if meeting.source.value == 'granola' %}badge-info{% else %}badge-warning{% endif %}">
+                        {{ meeting.source.value }}
+                    </span>
+                </td>
+                <td>{{ meeting.created_at.strftime('%Y-%m-%d %H:%M') }}</td>
+                <td>
+                    {% if meeting.processed_at %}
+                    <span class="badge badge-success">Processed</span>
+                    {% else %}
+                    <span class="badge badge-warning">Pending</span>
+                    {% endif %}
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+    <p>No meetings yet. Waiting for Granola data or <a href="/upload">upload a transcript</a>.</p>
+    {% endif %}
+</div>
+
+{% if failed_actions %}
+<div class="card">
+    <h2>Failed Actions</h2>
+    <table>
+        <thead>
+            <tr>
+                <th>Action Item</th>
+                <th>Error</th>
+                <th>Retries</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for action in failed_actions %}
+            <tr>
+                <td>{{ action.title[:50] }}{% if action.title|length > 50 %}...{% endif %}</td>
+                <td>{{ action.error_message[:50] if action.error_message else 'Unknown' }}...</td>
+                <td>{{ action.retry_count }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    <p class="mt-2"><a href="/retry-queue">View retry queue</a></p>
+</div>
+{% endif %}
+{% endblock %}

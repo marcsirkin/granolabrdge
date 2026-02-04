@@ -1,0 +1,56 @@
+{% extends "base.html" %}
+
+{% block title %}Upload Transcript - Granola Bridge{% endblock %}
+
+{% block content %}
+<h1>Upload Transcript</h1>
+
+<div class="card">
+    <p class="mb-2">Manually upload a meeting transcript to extract action items and create Trello cards.</p>
+
+    {% if error %}
+    <div class="error">{{ error }}</div>
+    {% endif %}
+
+    <form method="post" enctype="multipart/form-data">
+        <div>
+            <label for="title">Meeting Title *</label>
+            <input type="text" id="title" name="title" required placeholder="Weekly Team Standup">
+        </div>
+
+        <div>
+            <label for="transcript">Transcript</label>
+            <textarea id="transcript" name="transcript" placeholder="Paste your meeting transcript here...
+
+John: Let's start with the weekly updates.
+
+Sarah: I finished the API integration. Next week I'll work on the dashboard.
+
+John: Great. Can you also schedule a meeting with the design team?
+
+Sarah: Sure, I'll set that up for Tuesday.
+
+..."></textarea>
+        </div>
+
+        <div>
+            <label for="file">Or upload a text file</label>
+            <input type="file" id="file" name="file" accept=".txt,.md">
+        </div>
+
+        <div>
+            <button type="submit" class="btn btn-primary">Process Transcript</button>
+        </div>
+    </form>
+</div>
+
+<div class="card">
+    <h3>Tips</h3>
+    <ul style="margin-left: 1.5rem;">
+        <li>Include speaker names for better action item attribution</li>
+        <li>The LLM will identify action items, commitments, and follow-up tasks</li>
+        <li>Works great with voice memo transcripts from iPhone or other apps</li>
+        <li>Make sure LMStudio is running with a model loaded</li>
+    </ul>
+</div>
+{% endblock %}

@@ -1,0 +1,124 @@
+{% extends "base.html" %}
+
+{% block title %}Retry Queue - Granola Bridge{% endblock %}
+
+{% block content %}
+<h1>Retry Queue</h1>
+
+{% if pending %}
+<div class="card">
+    <h2>Pending Retries ({{ pending|length }})</h2>
+    <table>
+        <thead>
+            <tr>
+                <th>Type</th>
+                <th>Attempts</th>
+                <th>Next Retry</th>
+                <th>Actions</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for item in pending %}
+            <tr>
+                <td>{{ item.operation_type.value }}</td>
+                <td>{{ item.attempt_count }} / {{ item.max_attempts }}</td>
+                <td>{{ item.next_retry_at.strftime('%Y-%m-%d %H:%M:%S') }}</td>
+                <td>
+                    <form method="post" action="/retry-queue/{{ item.id }}/delete" style="display: inline;">
+                        <button type="submit" class="btn btn-danger btn-sm">Delete</button>
+                    </form>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endif %}
+
+{% if in_progress %}
+<div class="card">
+    <h2>In Progress ({{ in_progress|length }})</h2>
+    <table>
+        <thead>
+            <tr>
+                <th>Type</th>
+                <th>Attempts</th>
+                <th>Started</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for item in in_progress %}
+            <tr>
+                <td>{{ item.operation_type.value }}</td>
+                <td>{{ item.attempt_count }}</td>
+                <td>{{ item.updated_at.strftime('%Y-%m-%d %H:%M:%S') }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endif %}
+
+{% if failed %}
+<div class="card">
+    <h2>Permanently Failed ({{ failed|length }})</h2>
+    <table>
+        <thead>
+            <tr>
+                <th>Type</th>
+                <th>Attempts</th>
+                <th>Error</th>
+                <th>Actions</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for item in failed %}
+            <tr>
+                <td>{{ item.operation_type.value }}</td>
+                <td>{{ item.attempt_count }}</td>
+                <td>{{ item.error_message[:50] if item.error_message else 'Unknown' }}...</td>
+                <td>
+                    <form method="post" action="/retry-queue/{{ item.id }}/retry" style="display: inline;">
+                        <button type="submit" class="btn btn-primary btn-sm">Retry</button>
+                    </form>
+                    <form method="post" action="/retry-queue/{{ item.id }}/delete" style="display: inline;">
+                        <button type="submit" class="btn btn-danger btn-sm">Delete</button>
+                    </form>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endif %}
+
+{% if succeeded %}
+<div class="card">
+    <h2>Recent Successes</h2>
+    <table>
+        <thead>
+            <tr>
+                <th>Type</th>
+                <th>Attempts</th>
+                <th>Completed</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for item in succeeded %}
+            <tr>
+                <td>{{ item.operation_type.value }}</td>
+                <td>{{ item.attempt_count }}</td>
+                <td>{{ item.updated_at.strftime('%Y-%m-%d %H:%M:%S') }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endif %}
+
+{% if not pending and not in_progress and not failed and not succeeded %}
+<div class="card">
+    <p>The retry queue is empty. All operations have completed successfully.</p>
+</div>
+{% endif %}
+{% endblock %}
