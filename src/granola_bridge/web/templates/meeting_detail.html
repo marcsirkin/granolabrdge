@@ -5,7 +5,21 @@
 {% block content %}
 <div class="flex-between mb-2">
     <h1>{{ meeting.title }}</h1>
-    <a href="/meetings" class="btn btn-primary btn-sm">&larr; Back to Meetings</a>
+    <div>
+        {% if meeting.status.value in ['processed', 'failed'] %}
+        <form method="post" action="/meetings/{{ meeting.id }}/reprocess"
+              onsubmit="return confirm('Delete existing action items and reprocess this meeting?');"
+              style="display: inline;">
+            <button type="submit" class="btn btn-sm btn-warning">Reprocess</button>
+        </form>
+        {% endif %}
+        <form method="post" action="/meetings/{{ meeting.id }}/delete"
+              onsubmit="return confirm('Delete this meeting and all its action items?');"
+              style="display: inline;">
+            <button type="submit" class="btn btn-sm btn-danger">Delete</button>
+        </form>
+        <a href="/meetings" class="btn btn-primary btn-sm">&larr; Back to Meetings</a>
+    </div>
 </div>
 
 {% if llm_pending %}
@@ -15,10 +29,24 @@
 </div>
 {% endif %}
 
-{% if not meeting.processed_at and not llm_pending %}
+{% if meeting.status.value == 'pending' %}
 <div class="card" style="background-color: #fff3cd; border-left: 4px solid var(--warning);">
-    <strong>Pending extraction.</strong> This meeting has not been processed yet.
-    <br>Action items will be extracted when the LLM becomes available.
+    <strong>Waiting for transcript.</strong> This meeting is waiting for the transcript to stabilize.
+    <br>Processing will begin automatically once the transcript is complete.
+</div>
+{% elif meeting.status.value == 'ready' %}
+<div class="card" style="background-color: #fff3cd; border-left: 4px solid var(--warning);">
+    <strong>Ready for processing.</strong> This meeting is queued for LLM extraction.
+    <br>Action items will be extracted shortly.
+</div>
+{% elif meeting.status.value == 'processing' %}
+<div class="card" style="background-color: #cce5ff; border-left: 4px solid var(--info);">
+    <strong>Processing...</strong> LLM extraction is in progress.
+</div>
+{% elif meeting.status.value == 'failed' and not llm_pending %}
+<div class="card" style="background-color: #f8d7da; border-left: 4px solid var(--danger);">
+    <strong>Processing failed.</strong> LLM extraction encountered an error.
+    <br>You can try again using the "Reprocess" button above.
 </div>
 {% endif %}
 
@@ -28,6 +56,19 @@
         <span class="badge {% if meeting.source.value == 'granola' %}badge-info{% else %}badge-warning{% endif %}">
             {{ meeting.source.value }}
         </span>
+    </p>
+    <p><strong>Status:</strong>
+        {% if meeting.status.value == 'processed' %}
+        <span class="badge badge-success">Processed</span>
+        {% elif meeting.status.value == 'processing' %}
+        <span class="badge badge-info">Processing</span>
+        {% elif meeting.status.value == 'ready' %}
+        <span class="badge badge-warning">Ready</span>
+        {% elif meeting.status.value == 'failed' %}
+        <span class="badge badge-danger">Failed</span>
+        {% else %}
+        <span class="badge badge-warning">Pending</span>
+        {% endif %}
     </p>
     {% if meeting.meeting_date %}
     <p><strong>Meeting Date:</strong> {{ meeting.meeting_date.strftime('%Y-%m-%d %H:%M') }}</p>

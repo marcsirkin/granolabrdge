@@ -8,7 +8,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from granola_bridge.models.database import Base
-from granola_bridge.models.meeting import Meeting, MeetingSource
+from granola_bridge.models.meeting import Meeting, MeetingSource, MeetingStatus, compute_transcript_hash
 from granola_bridge.models.action_item import ActionItem, ActionItemStatus
 from granola_bridge.models.retry_queue import RetryQueue, RetryStatus, OperationType
 
@@ -76,6 +76,74 @@ class TestMeetingModel:
 
         with pytest.raises(Exception):  # IntegrityError
             session.commit()
+
+    def test_meeting_status_default(self, session):
+        """Test that new meetings default to PENDING status."""
+        meeting = Meeting(
+            title="Test Meeting",
+            transcript="Test content",
+        )
+        session.add(meeting)
+        session.commit()
+
+        retrieved = session.query(Meeting).first()
+        assert retrieved.status == MeetingStatus.PENDING
+
+    def test_meeting_status_transitions(self, session):
+        """Test meeting status can be changed."""
+        meeting = Meeting(
+            title="Test Meeting",
+            transcript="Test content",
+            status=MeetingStatus.PENDING,
+        )
+        session.add(meeting)
+        session.commit()
+
+        meeting.status = MeetingStatus.READY
+        session.commit()
+        assert meeting.status == MeetingStatus.READY
+
+        meeting.status = MeetingStatus.PROCESSING
+        session.commit()
+        assert meeting.status == MeetingStatus.PROCESSING
+
+        meeting.status = MeetingStatus.PROCESSED
+        meeting.processed_at = datetime.utcnow()
+        session.commit()
+        assert meeting.status == MeetingStatus.PROCESSED
+
+    def test_transcript_hash(self, session):
+        """Test transcript hash computation and storage."""
+        transcript = "This is a test transcript"
+        expected_hash = compute_transcript_hash(transcript)
+
+        meeting = Meeting(
+            title="Test Meeting",
+            transcript=transcript,
+            transcript_hash=expected_hash,
+        )
+        session.add(meeting)
+        session.commit()
+
+        retrieved = session.query(Meeting).first()
+        assert retrieved.transcript_hash == expected_hash
+        assert retrieved.transcript_hash == compute_transcript_hash(retrieved.transcript)
+
+    def test_stability_tracking_fields(self, session):
+        """Test first_seen_at and stable_since fields."""
+        now = datetime.utcnow()
+        meeting = Meeting(
+            title="Test Meeting",
+            transcript="Test content",
+            first_seen_at=now,
+            stable_since=now,
+        )
+        session.add(meeting)
+        session.commit()
+
+        retrieved = session.query(Meeting).first()
+        assert retrieved.first_seen_at is not None
+        assert retrieved.stable_since is not None
 
 
 class TestActionItemModel:

@@ -12,6 +12,9 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class GranolaConfig(BaseModel):
     cache_path: str = "~/Library/Application Support/Granola/cache-v3.json"
     watch_debounce_ms: int = 500
+    min_transcript_length: int = 500       # Minimum chars for "complete" transcript
+    stability_window_seconds: int = 30     # How long transcript must be unchanged
+    max_wait_minutes: int = 10             # Don't wait forever for stabilization
 
 
 class LLMConfig(BaseModel):

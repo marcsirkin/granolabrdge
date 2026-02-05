@@ -16,9 +16,11 @@ from granola_bridge.models import (
     ActionItemStatus,
     Meeting,
     MeetingSource,
+    MeetingStatus,
     OperationType,
     RetryQueue,
 )
+from granola_bridge.models.meeting import compute_transcript_hash
 from granola_bridge.models.database import get_session_factory
 from granola_bridge.services.action_extractor import ActionExtractor
 from granola_bridge.services.granola_parser import GranolaParser
@@ -122,7 +124,19 @@ class Daemon:
             )
 
     async def _process_existing_meetings(self) -> None:
-        """Process any meetings that exist but haven't been processed."""
+        """Detect new meetings and check maturation on startup."""
+        await self._detect_new_meetings()
+        await self._check_meeting_maturation()
+        await self._process_ready_meetings()
+
+    async def _process_changes(self) -> None:
+        """Three-phase processing: detect, mature, process."""
+        await self._detect_new_meetings()
+        await self._check_meeting_maturation()
+        await self._process_ready_meetings()
+
+    async def _detect_new_meetings(self) -> None:
+        """Phase 1: Create PENDING records for newly discovered meetings."""
         SessionLocal = get_session_factory()
         session = SessionLocal()
 
@@ -139,91 +153,174 @@ class Daemon:
             new_meetings = self.parser.get_new_meetings(known_ids)
 
             for meeting_data in new_meetings:
-                await self._process_meeting(session, meeting_data)
+                now = datetime.utcnow()
+                transcript_hash = compute_transcript_hash(meeting_data.transcript)
+
+                meeting = Meeting(
+                    granola_id=meeting_data.granola_id,
+                    title=meeting_data.title,
+                    transcript=meeting_data.transcript,
+                    meeting_date=meeting_data.meeting_date,
+                    source=MeetingSource.GRANOLA,
+                    status=MeetingStatus.PENDING,
+                    transcript_hash=transcript_hash,
+                    first_seen_at=now,
+                    stable_since=now,
+                )
+                session.add(meeting)
+                logger.info(f"Detected new meeting (PENDING): {meeting_data.title}")
+
+            session.commit()
 
         except Exception as e:
-            logger.error(f"Error processing existing meetings: {e}")
+            logger.error(f"Error detecting new meetings: {e}")
             session.rollback()
         finally:
             session.close()
 
-    async def _process_changes(self) -> None:
-        """Process new meetings from Granola."""
+    async def _check_meeting_maturation(self) -> None:
+        """Phase 2: Check if PENDING meetings are ready for processing."""
         SessionLocal = get_session_factory()
         session = SessionLocal()
 
         try:
-            # Get known IDs
-            known_ids = {
-                m.granola_id
-                for m in session.query(Meeting.granola_id).filter(
-                    Meeting.granola_id.isnot(None)
-                )
-            }
+            # Get all pending meetings
+            pending_meetings = (
+                session.query(Meeting)
+                .filter(Meeting.status == MeetingStatus.PENDING)
+                .filter(Meeting.granola_id.isnot(None))
+                .all()
+            )
 
-            # Get new meetings
-            new_meetings = self.parser.get_new_meetings(known_ids)
+            now = datetime.utcnow()
+            stability_window = self.config.granola.stability_window_seconds
+            min_length = self.config.granola.min_transcript_length
+            max_wait_minutes = self.config.granola.max_wait_minutes
 
-            for meeting_data in new_meetings:
-                await self._process_meeting(session, meeting_data)
+            for meeting in pending_meetings:
+                # Re-fetch current transcript from Granola cache
+                current_data = self.parser.get_meeting_by_id(meeting.granola_id)
+
+                if not current_data:
+                    # Meeting no longer in cache - mark ready with what we have
+                    logger.warning(f"Meeting {meeting.granola_id} no longer in Granola cache")
+                    meeting.status = MeetingStatus.READY
+                    continue
+
+                # Check if transcript changed
+                current_hash = compute_transcript_hash(current_data.transcript)
+
+                if current_hash != meeting.transcript_hash:
+                    # Transcript changed - update and reset stability timer
+                    meeting.transcript = current_data.transcript
+                    meeting.transcript_hash = current_hash
+                    meeting.stable_since = now
+                    logger.debug(f"Meeting {meeting.title} transcript changed, resetting timer")
+                    continue
+
+                # Check if stable long enough and meets minimum length
+                if meeting.stable_since:
+                    stable_duration = (now - meeting.stable_since).total_seconds()
+                    transcript_length = len(meeting.transcript)
+
+                    if stable_duration >= stability_window and transcript_length >= min_length:
+                        meeting.status = MeetingStatus.READY
+                        logger.info(f"Meeting matured (READY): {meeting.title}")
+                        continue
+
+                # Check max wait timeout
+                if meeting.first_seen_at:
+                    wait_duration = (now - meeting.first_seen_at).total_seconds() / 60
+                    if wait_duration >= max_wait_minutes:
+                        meeting.status = MeetingStatus.READY
+                        logger.info(f"Meeting timeout (READY): {meeting.title} (waited {wait_duration:.1f} min)")
+
+            session.commit()
 
         except Exception as e:
-            logger.error(f"Error processing changes: {e}")
+            logger.error(f"Error checking meeting maturation: {e}")
             session.rollback()
         finally:
             session.close()
 
-    async def _process_meeting(self, session: Session, meeting_data) -> None:
-        """Process a single meeting: store, extract actions, create cards."""
-        from granola_bridge.services.granola_parser import GranolaMeeting
+    async def _process_ready_meetings(self) -> None:
+        """Phase 3: Process meetings that are READY for LLM extraction."""
+        SessionLocal = get_session_factory()
+        session = SessionLocal()
 
-        logger.info(f"Processing meeting: {meeting_data.title}")
+        try:
+            # Get all ready meetings
+            ready_meetings = (
+                session.query(Meeting)
+                .filter(Meeting.status == MeetingStatus.READY)
+                .all()
+            )
 
-        # Create meeting record
-        meeting = Meeting(
-            granola_id=meeting_data.granola_id,
-            title=meeting_data.title,
-            transcript=meeting_data.transcript,
-            meeting_date=meeting_data.meeting_date,
-            source=MeetingSource.GRANOLA,
-        )
-        session.add(meeting)
+            for meeting in ready_meetings:
+                await self._process_meeting(session, meeting)
+
+        except Exception as e:
+            logger.error(f"Error processing ready meetings: {e}")
+            session.rollback()
+        finally:
+            session.close()
+
+    async def _process_meeting(self, session: Session, meeting: Meeting) -> None:
+        """Process a single meeting: extract actions, create cards."""
+        logger.info(f"Processing meeting: {meeting.title}")
+
+        # Mark as processing
+        meeting.status = MeetingStatus.PROCESSING
         session.commit()
 
         # Extract action items
         try:
             extracted = await self.extractor.extract(
-                meeting_data.title,
-                meeting_data.transcript,
+                meeting.title,
+                meeting.transcript,
             )
         except LLMError as e:
             logger.error(f"LLM extraction failed: {e}")
+            meeting.status = MeetingStatus.FAILED
+            session.commit()
             await self.notifier.send_alert(
                 "LLM Extraction Failed",
-                f"Meeting: {meeting_data.title}\nError: {e}",
+                f"Meeting: {meeting.title}\nError: {e}",
                 error=True,
             )
+            return
+        except Exception as e:
+            logger.error(f"Unexpected error processing meeting {meeting.id}: {e}")
+            meeting.status = MeetingStatus.FAILED
+            meeting.error_message = f"Processing error: {str(e)}"
+            session.commit()
             return
 
         logger.info(f"Extracted {len(extracted)} action items")
 
         # Create action items and Trello cards
         for item in extracted:
-            action_item = ActionItem(
-                meeting_id=meeting.id,
-                title=item.title,
-                description=item.description,
-                context=item.context,
-                assignee=item.assignee,
-                status=ActionItemStatus.PENDING,
-            )
-            session.add(action_item)
-            session.commit()
+            try:
+                action_item = ActionItem(
+                    meeting_id=meeting.id,
+                    title=item.title,
+                    description=item.description,
+                    context=item.context,
+                    assignee=item.assignee,
+                    status=ActionItemStatus.PENDING,
+                )
+                session.add(action_item)
+                session.commit()
 
-            # Create Trello card
-            await self._create_trello_card(session, action_item, meeting)
+                # Create Trello card
+                await self._create_trello_card(session, action_item, meeting)
+            except Exception as e:
+                logger.error(f"Error processing action item '{item.title}': {e}")
+                session.rollback()
+                continue
 
         # Mark meeting as processed
+        meeting.status = MeetingStatus.PROCESSED
         meeting.processed_at = datetime.utcnow()
         session.commit()
 
@@ -268,6 +365,11 @@ class Daemon:
                 },
                 max_attempts=self.config.retry.max_attempts,
             )
+        except Exception as e:
+            logger.error(f"Unexpected error creating Trello card for action {action_item.id}: {e}")
+            action_item.status = ActionItemStatus.FAILED
+            action_item.error_message = f"Unexpected error: {str(e)}"
+            session.commit()
 
     def _format_card_description(
         self,

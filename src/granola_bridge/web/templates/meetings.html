@@ -18,6 +18,7 @@
                 <th>Action Items</th>
                 <th>Date</th>
                 <th>Status</th>
+                <th>Actions</th>
             </tr>
         </thead>
         <tbody>
@@ -36,11 +37,24 @@
                 <td>{{ item.action_count }}</td>
                 <td>{{ item.meeting.created_at.strftime('%Y-%m-%d %H:%M') }}</td>
                 <td>
-                    {% if item.meeting.processed_at %}
+                    {% if item.meeting.status.value == 'processed' %}
                     <span class="badge badge-success">Processed</span>
+                    {% elif item.meeting.status.value == 'processing' %}
+                    <span class="badge badge-info">Processing</span>
+                    {% elif item.meeting.status.value == 'ready' %}
+                    <span class="badge badge-warning">Ready</span>
+                    {% elif item.meeting.status.value == 'failed' %}
+                    <span class="badge badge-danger">Failed</span>
                     {% else %}
                     <span class="badge badge-warning">Pending</span>
                     {% endif %}
+                </td>
+                <td>
+                    <form method="post" action="/meetings/{{ item.meeting.id }}/delete"
+                          onsubmit="return confirm('Delete this meeting and all its action items?');"
+                          style="display: inline;">
+                        <button type="submit" class="btn btn-sm btn-danger">Delete</button>
+                    </form>
                 </td>
             </tr>
             {% endfor %}

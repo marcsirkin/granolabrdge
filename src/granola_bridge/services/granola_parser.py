@@ -122,6 +122,21 @@ class GranolaParser:
 
         return new_meetings
 
+    def get_meeting_by_id(self, granola_id: str) -> Optional[GranolaMeeting]:
+        """Fetch a specific meeting from the cache by its Granola ID.
+
+        Args:
+            granola_id: The Granola document ID to look up
+
+        Returns:
+            GranolaMeeting if found, None otherwise
+        """
+        all_meetings = self.parse()
+        for meeting in all_meetings:
+            if meeting.granola_id == granola_id:
+                return meeting
+        return None
+
     def _parse_document(self, doc: dict, transcripts: dict) -> Optional[GranolaMeeting]:
         """Parse a single document into a meeting."""
         try:

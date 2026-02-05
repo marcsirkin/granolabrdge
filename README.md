@@ -28,6 +28,12 @@ A Python background daemon that monitors [Granola](https://granola.so) meeting t
 ```bash
 git clone <repo-url>
 cd granola-to-trello
+
+# Create and activate virtual environment
+python3 -m venv venv
+source venv/bin/activate
+
+# Install the package
 pip install -e .
 ```
 
@@ -188,6 +194,10 @@ database:
 ## Development
 
 ```bash
+# Create and activate virtual environment (if not already done)
+python3 -m venv venv
+source venv/bin/activate
+
 # Install with dev dependencies
 pip install -e ".[dev]"
 
@@ -196,6 +206,9 @@ pytest
 
 # Run with verbose logging
 granola-bridge -v run
+
+# Run without activating venv (use full path)
+./venv/bin/granola-bridge run
 ```
 
 ## Project Structure
@@ -232,6 +245,11 @@ granola-to-trello/
 ```
 
 ## Troubleshooting
+
+### "granola-bridge: command not found"
+- Activate the virtual environment first: `source venv/bin/activate`
+- Or run directly: `./venv/bin/granola-bridge run`
+- Don't use `python -m granola_bridge` - use the installed `granola-bridge` script
 
 ### "Cannot connect to LLM server"
 - Ensure LMStudio is running and has a model loaded
