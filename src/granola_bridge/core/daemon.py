@@ -224,6 +224,13 @@ class Daemon:
                     transcript_length = len(meeting.transcript)
 
                     if stable_duration >= stability_window and transcript_length >= min_length:
+                        # Only mark READY if meeting has actually ended in Granola
+                        if current_data.meeting_end_count == 0:
+                            logger.debug(
+                                f"Meeting '{meeting.title}' still in progress "
+                                f"(meeting_end_count=0), skipping"
+                            )
+                            continue
                         meeting.status = MeetingStatus.READY
                         logger.info(f"Meeting matured (READY): {meeting.title}")
                         continue
@@ -232,8 +239,27 @@ class Daemon:
                 if meeting.first_seen_at:
                     wait_duration = (now - meeting.first_seen_at).total_seconds() / 60
                     if wait_duration >= max_wait_minutes:
-                        meeting.status = MeetingStatus.READY
-                        logger.info(f"Meeting timeout (READY): {meeting.title} (waited {wait_duration:.1f} min)")
+                        transcript_length = len(meeting.transcript)
+                        if transcript_length < min_length:
+                            logger.warning(
+                                f"Meeting '{meeting.title}' timed out but transcript too short "
+                                f"({transcript_length} < {min_length} chars), re-fetching"
+                            )
+                            # Try re-fetching transcript from cache before giving up
+                            if current_data and len(current_data.transcript) > transcript_length:
+                                meeting.transcript = current_data.transcript
+                                meeting.transcript_hash = compute_transcript_hash(current_data.transcript)
+                            if len(meeting.transcript) >= min_length:
+                                meeting.status = MeetingStatus.READY
+                                logger.info(f"Meeting timeout (READY after re-fetch): {meeting.title}")
+                            else:
+                                logger.warning(
+                                    f"Meeting '{meeting.title}' still too short after re-fetch, "
+                                    f"staying PENDING"
+                                )
+                        else:
+                            meeting.status = MeetingStatus.READY
+                            logger.info(f"Meeting timeout (READY): {meeting.title} (waited {wait_duration:.1f} min)")
 
             session.commit()
 

@@ -19,6 +19,7 @@ class GranolaMeeting:
     transcript: str
     meeting_date: Optional[datetime]
     participants: list[str]
+    meeting_end_count: int = 0  # 0 = in progress, 1+ = ended
 
 
 class GranolaParser:
@@ -158,12 +159,18 @@ class GranolaParser:
             # Extract participants from people field
             participants = self._extract_participants(doc.get("people", []))
 
+            # Get meeting_end_count (0 = in progress, 1+ = ended)
+            meeting_end_count = doc.get("meeting_end_count", 0)
+            if not isinstance(meeting_end_count, int):
+                meeting_end_count = 0
+
             return GranolaMeeting(
                 granola_id=str(doc_id),
                 title=title,
                 transcript=transcript,
                 meeting_date=meeting_date,
                 participants=participants,
+                meeting_end_count=meeting_end_count,
             )
 
         except Exception as e:
@@ -179,6 +186,11 @@ class GranolaParser:
                 transcript = self._join_transcript_segments(segments)
                 if transcript:
                     return transcript
+                else:
+                    logger.warning(
+                        f"Document {doc_id}: {len(segments)} transcript segments produced empty result, "
+                        f"falling back to notes"
+                    )
 
         # Second try: notes_plain or notes_markdown from document
         notes = doc.get("notes_plain") or doc.get("notes_markdown") or ""
@@ -194,13 +206,24 @@ class GranolaParser:
 
     def _join_transcript_segments(self, segments: list) -> str:
         """Join transcript segments into a single string."""
+        # Debug: log segment format info to diagnose join failures
+        if segments:
+            first = segments[0]
+            segment_type = type(first).__name__
+            sample_keys = list(first.keys())[:5] if isinstance(first, dict) else None
+            logger.debug(
+                f"Joining {len(segments)} segments: type={segment_type}, "
+                f"sample_keys={sample_keys}"
+            )
+
         # Sort by start_timestamp if available
         try:
             sorted_segments = sorted(
                 segments,
                 key=lambda s: s.get("start_timestamp", "") if isinstance(s, dict) else ""
             )
-        except Exception:
+        except Exception as e:
+            logger.warning(f"Failed to sort transcript segments: {e}")
             sorted_segments = segments
 
         texts = []
