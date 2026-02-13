@@ -25,6 +25,7 @@ class LLMConfig(BaseModel):
 
 class TrelloConfig(BaseModel):
     api_base_url: str = "https://api.trello.com/1"
+    auto_push: bool = False
 
 
 class RetryConfig(BaseModel):

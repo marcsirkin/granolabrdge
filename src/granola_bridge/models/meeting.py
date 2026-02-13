@@ -24,6 +24,7 @@ class MeetingStatus(str, enum.Enum):
     PENDING = "pending"        # Waiting for transcript to stabilize
     READY = "ready"            # Ready for LLM extraction
     PROCESSING = "processing"  # Currently being processed
+    REVIEW = "review"          # Items extracted, awaiting user review
     PROCESSED = "processed"    # Successfully processed
     FAILED = "failed"          # Processing failed
 
@@ -56,6 +57,7 @@ class Meeting(Base):
     transcript_hash: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
     first_seen_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     stable_since: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
     # Relationship to action items
     action_items: Mapped[List["ActionItem"]] = relationship(

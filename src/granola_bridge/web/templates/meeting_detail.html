@@ -6,7 +6,7 @@
 <div class="flex-between mb-2">
     <h1>{{ meeting.title }}</h1>
     <div>
-        {% if meeting.status.value in ['processed', 'failed'] %}
+        {% if meeting.status.value in ['processed', 'failed', 'review'] %}
         <form method="post" action="/meetings/{{ meeting.id }}/reprocess"
               onsubmit="return confirm('Delete existing action items and reprocess this meeting?');"
               style="display: inline;">
@@ -43,6 +43,22 @@
 <div class="card" style="background-color: #cce5ff; border-left: 4px solid var(--info);">
     <strong>Processing...</strong> LLM extraction is in progress.
 </div>
+{% elif meeting.status.value == 'review' %}
+<div class="card" style="background-color: #e0f2fe; border-left: 4px solid var(--primary);">
+    <div class="flex-between">
+        <div>
+            <strong>Review action items.</strong>
+            {% set pending_count = action_items|selectattr('status.value', 'equalto', 'pending')|list|length %}
+            {{ pending_count }} item{% if pending_count != 1 %}s{% endif %} awaiting review.
+            Use thumbs up to send to Trello, thumbs down to skip.
+        </div>
+        {% if pending_count > 0 %}
+        <form method="post" action="/meetings/{{ meeting.id }}/approve-all" style="margin: 0;">
+            <button type="submit" class="btn btn-primary btn-sm">Send All to Trello</button>
+        </form>
+        {% endif %}
+    </div>
+</div>
 {% elif meeting.status.value == 'failed' and not llm_pending %}
 <div class="card" style="background-color: #f8d7da; border-left: 4px solid var(--danger);">
     <strong>Processing failed.</strong> LLM extraction encountered an error.
@@ -62,6 +78,8 @@
         <span class="badge badge-success">Processed</span>
         {% elif meeting.status.value == 'processing' %}
         <span class="badge badge-info">Processing</span>
+        {% elif meeting.status.value == 'review' %}
+        <span class="badge badge-review">Needs Review</span>
         {% elif meeting.status.value == 'ready' %}
         <span class="badge badge-warning">Ready</span>
         {% elif meeting.status.value == 'failed' %}
@@ -83,42 +101,20 @@
 </div>
 
 <div class="card">
-    <h3>Action Items ({{ action_items|length }})</h3>
+    <div class="flex-between mb-2">
+        <h3>Action Items ({{ action_items|length }})</h3>
+        {% set pending_count = action_items|selectattr('status.value', 'equalto', 'pending')|list|length %}
+        {% if pending_count > 0 and meeting.status.value != 'review' %}
+        <form method="post" action="/meetings/{{ meeting.id }}/approve-all" style="margin: 0;">
+            <button type="submit" class="btn btn-primary btn-sm">Send All to Trello</button>
+        </form>
+        {% endif %}
+    </div>
 
     {% if action_items %}
     <div class="action-list">
         {% for item in action_items %}
-        <div class="action-item">
-            <div class="flex-between">
-                <div class="title">{{ item.title }}</div>
-                <span class="badge
-                    {% if item.status.value == 'sent' %}badge-success
-                    {% elif item.status.value == 'pending' %}badge-warning
-                    {% elif item.status.value == 'failed' %}badge-danger
-                    {% else %}badge-info{% endif %}">
-                    {{ item.status.value }}
-                </span>
-            </div>
-
-            {% if item.description %}
-            <p>{{ item.description }}</p>
-            {% endif %}
-
-            {% if item.context %}
-            <div class="context">{{ item.context }}</div>
-            {% endif %}
-
-            <div class="meta mt-2">
-                {% if item.assignee %}
-                <span><strong>Assignee:</strong> {{ item.assignee }}</span> &bull;
-                {% endif %}
-                {% if item.trello_card_url %}
-                <a href="{{ item.trello_card_url }}" target="_blank">View in Trello &rarr;</a>
-                {% elif item.error_message %}
-                <span style="color: var(--danger);">Error: {{ item.error_message[:100] }}</span>
-                {% endif %}
-            </div>
-        </div>
+        {% include "partials/action_item_row.html" %}
         {% endfor %}
     </div>
     {% else %}

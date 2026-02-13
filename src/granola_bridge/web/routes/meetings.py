@@ -1,13 +1,17 @@
 """Meeting routes - list and detail views."""
 
 import logging
+from datetime import datetime
 from typing import Optional
 
 from fastapi import APIRouter, Request, Query
 from fastapi.responses import HTMLResponse, RedirectResponse
 
-from granola_bridge.models import Meeting, ActionItem, MeetingStatus, RetryQueue
+from granola_bridge.config import get_config
+from granola_bridge.models import Meeting, ActionItem, ActionItemStatus, MeetingStatus, RetryQueue
 from granola_bridge.models.database import get_session_factory
+from granola_bridge.services.trello_client import TrelloClient, TrelloError
+from granola_bridge.services.trello_helpers import format_card_description
 from granola_bridge.web.templates_helper import get_templates
 
 logger = logging.getLogger(__name__)
@@ -204,6 +208,155 @@ async def reprocess_meeting(meeting_id: str):
 
     except Exception as e:
         logger.error(f"Error reprocessing meeting: {e}")
+        session.rollback()
+        return RedirectResponse(url=f"/meetings/{meeting_id}", status_code=303)
+    finally:
+        session.close()
+
+
+def _check_review_complete(session, meeting: Meeting) -> None:
+    """If no PENDING action items remain, transition meeting to PROCESSED."""
+    pending_count = (
+        session.query(ActionItem)
+        .filter(ActionItem.meeting_id == meeting.id)
+        .filter(ActionItem.status == ActionItemStatus.PENDING)
+        .count()
+    )
+    if pending_count == 0:
+        meeting.status = MeetingStatus.PROCESSED
+        meeting.processed_at = datetime.utcnow()
+
+
+@router.post("/{meeting_id}/actions/{action_id}/approve", response_class=HTMLResponse)
+async def approve_action(meeting_id: str, action_id: str):
+    """Approve a single action item — push to Trello and mark SENT."""
+    config = get_config()
+    SessionLocal = get_session_factory()
+    session = SessionLocal()
+    templates = get_templates()
+
+    try:
+        meeting = session.get(Meeting, meeting_id)
+        action_item = session.get(ActionItem, action_id)
+
+        if not meeting or not action_item or action_item.meeting_id != meeting_id:
+            return HTMLResponse('<div class="error">Not found</div>', status_code=404)
+
+        if action_item.status != ActionItemStatus.PENDING:
+            return HTMLResponse('<div class="error">Already reviewed</div>', status_code=400)
+
+        # Push to Trello
+        trello_client = TrelloClient(config)
+        description = format_card_description(action_item, meeting)
+
+        try:
+            card = await trello_client.create_card(
+                name=action_item.title,
+                desc=description,
+            )
+            action_item.trello_card_id = card["id"]
+            action_item.trello_card_url = card.get("shortUrl") or card.get("url")
+            action_item.status = ActionItemStatus.SENT
+        except TrelloError as e:
+            action_item.status = ActionItemStatus.FAILED
+            action_item.error_message = str(e)
+            logger.error(f"Failed to create Trello card: {e}")
+
+        _check_review_complete(session, meeting)
+        session.commit()
+
+        # Return updated action item HTML fragment for htmx swap
+        return templates.TemplateResponse(
+            "partials/action_item_row.html",
+            {"request": {}, "item": action_item, "meeting": meeting},
+        )
+
+    except Exception as e:
+        logger.error(f"Error approving action item: {e}")
+        session.rollback()
+        return HTMLResponse(f'<div class="error">Error: {e}</div>', status_code=500)
+    finally:
+        session.close()
+
+
+@router.post("/{meeting_id}/actions/{action_id}/reject", response_class=HTMLResponse)
+async def reject_action(meeting_id: str, action_id: str):
+    """Reject a single action item — mark SKIPPED."""
+    SessionLocal = get_session_factory()
+    session = SessionLocal()
+    templates = get_templates()
+
+    try:
+        meeting = session.get(Meeting, meeting_id)
+        action_item = session.get(ActionItem, action_id)
+
+        if not meeting or not action_item or action_item.meeting_id != meeting_id:
+            return HTMLResponse('<div class="error">Not found</div>', status_code=404)
+
+        if action_item.status != ActionItemStatus.PENDING:
+            return HTMLResponse('<div class="error">Already reviewed</div>', status_code=400)
+
+        action_item.status = ActionItemStatus.SKIPPED
+
+        _check_review_complete(session, meeting)
+        session.commit()
+
+        return templates.TemplateResponse(
+            "partials/action_item_row.html",
+            {"request": {}, "item": action_item, "meeting": meeting},
+        )
+
+    except Exception as e:
+        logger.error(f"Error rejecting action item: {e}")
+        session.rollback()
+        return HTMLResponse(f'<div class="error">Error: {e}</div>', status_code=500)
+    finally:
+        session.close()
+
+
+@router.post("/{meeting_id}/approve-all")
+async def approve_all_actions(meeting_id: str):
+    """Approve all remaining PENDING action items."""
+    config = get_config()
+    SessionLocal = get_session_factory()
+    session = SessionLocal()
+
+    try:
+        meeting = session.get(Meeting, meeting_id)
+        if not meeting:
+            return RedirectResponse(url="/meetings", status_code=303)
+
+        pending_items = (
+            session.query(ActionItem)
+            .filter(ActionItem.meeting_id == meeting_id)
+            .filter(ActionItem.status == ActionItemStatus.PENDING)
+            .all()
+        )
+
+        trello_client = TrelloClient(config)
+
+        for action_item in pending_items:
+            description = format_card_description(action_item, meeting)
+            try:
+                card = await trello_client.create_card(
+                    name=action_item.title,
+                    desc=description,
+                )
+                action_item.trello_card_id = card["id"]
+                action_item.trello_card_url = card.get("shortUrl") or card.get("url")
+                action_item.status = ActionItemStatus.SENT
+            except TrelloError as e:
+                action_item.status = ActionItemStatus.FAILED
+                action_item.error_message = str(e)
+                logger.error(f"Failed to create Trello card: {e}")
+
+        _check_review_complete(session, meeting)
+        session.commit()
+
+        return RedirectResponse(url=f"/meetings/{meeting_id}", status_code=303)
+
+    except Exception as e:
+        logger.error(f"Error approving all actions: {e}")
         session.rollback()
         return RedirectResponse(url=f"/meetings/{meeting_id}", status_code=303)
     finally:

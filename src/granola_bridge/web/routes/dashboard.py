@@ -7,11 +7,12 @@ from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 
 from granola_bridge.config import get_config
-from granola_bridge.models import Meeting, ActionItem, ActionItemStatus, RetryQueue, RetryStatus
+from granola_bridge.models import Meeting, ActionItem, ActionItemStatus, MeetingStatus, RetryQueue, RetryStatus
 from granola_bridge.models.database import get_session_factory
 from granola_bridge.services.action_extractor import ActionExtractor
 from granola_bridge.services.llm_client import LLMClient, LLMError
 from granola_bridge.services.trello_client import TrelloClient, TrelloError
+from granola_bridge.services.trello_helpers import format_card_description
 from granola_bridge.web.templates_helper import get_templates
 
 logger = logging.getLogger(__name__)
@@ -63,6 +64,13 @@ async def dashboard(request: Request):
             .count()
         )
 
+        # Meetings awaiting review
+        needs_review = (
+            session.query(Meeting)
+            .filter(Meeting.status == MeetingStatus.REVIEW)
+            .count()
+        )
+
         # Unprocessed meetings (LLM was unavailable)
         unprocessed_count = (
             session.query(Meeting)
@@ -100,6 +108,7 @@ async def dashboard(request: Request):
                     "actions_pending": actions_pending,
                     "actions_failed": actions_failed,
                     "retry_pending": retry_pending,
+                    "needs_review": needs_review,
                     "unprocessed_count": unprocessed_count,
                 },
                 "recent_meetings": recent_meetings,
@@ -149,7 +158,7 @@ async def process_unprocessed(request: Request):
                 # Extract action items
                 extracted = await extractor.extract(meeting.title, meeting.transcript)
 
-                # Create action items and Trello cards
+                # Create action items
                 for item in extracted:
                     action_item = ActionItem(
                         meeting_id=meeting.id,
@@ -162,25 +171,29 @@ async def process_unprocessed(request: Request):
                     session.add(action_item)
                     session.commit()
 
-                    # Create Trello card
-                    try:
-                        description = _format_card_description(action_item, meeting)
-                        card = await trello_client.create_card(
-                            name=action_item.title,
-                            desc=description,
-                        )
-                        action_item.trello_card_id = card["id"]
-                        action_item.trello_card_url = card.get("shortUrl") or card.get("url")
-                        action_item.status = ActionItemStatus.SENT
-                    except TrelloError as e:
-                        action_item.status = ActionItemStatus.FAILED
-                        action_item.error_message = str(e)
-                        logger.error(f"Failed to create Trello card: {e}")
+                    # Only push to Trello immediately if auto_push is enabled
+                    if config.trello.auto_push:
+                        try:
+                            description = format_card_description(action_item, meeting)
+                            card = await trello_client.create_card(
+                                name=action_item.title,
+                                desc=description,
+                            )
+                            action_item.trello_card_id = card["id"]
+                            action_item.trello_card_url = card.get("shortUrl") or card.get("url")
+                            action_item.status = ActionItemStatus.SENT
+                        except TrelloError as e:
+                            action_item.status = ActionItemStatus.FAILED
+                            action_item.error_message = str(e)
+                            logger.error(f"Failed to create Trello card: {e}")
 
-                    session.commit()
+                        session.commit()
 
-                # Mark meeting as processed
-                meeting.processed_at = datetime.utcnow()
+                if config.trello.auto_push:
+                    meeting.status = MeetingStatus.PROCESSED
+                    meeting.processed_at = datetime.utcnow()
+                else:
+                    meeting.status = MeetingStatus.REVIEW
                 session.commit()
                 processed_count += 1
                 logger.info(f"Meeting processed: {meeting.title}")
@@ -200,22 +213,3 @@ async def process_unprocessed(request: Request):
     return RedirectResponse(url="/", status_code=303)
 
 
-def _format_card_description(action_item: ActionItem, meeting: Meeting) -> str:
-    """Format the Trello card description."""
-    parts = []
-
-    if action_item.context:
-        parts.append(f"**Context:** {action_item.context}")
-
-    if action_item.description:
-        parts.append(f"\n{action_item.description}")
-
-    if action_item.assignee:
-        parts.append(f"\n**Assignee:** {action_item.assignee}")
-
-    parts.append(f"\n---\n*From meeting: {meeting.title}*")
-
-    if meeting.meeting_date:
-        parts.append(f"\n*Date: {meeting.meeting_date.strftime('%Y-%m-%d')}*")
-
-    return "\n".join(parts)

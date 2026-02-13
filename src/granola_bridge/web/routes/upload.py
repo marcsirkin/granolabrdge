@@ -8,11 +8,12 @@ from fastapi import APIRouter, Request, Form, UploadFile, File
 from fastapi.responses import HTMLResponse, RedirectResponse
 
 from granola_bridge.config import get_config
-from granola_bridge.models import Meeting, MeetingSource, ActionItem, ActionItemStatus
+from granola_bridge.models import Meeting, MeetingSource, MeetingStatus, ActionItem, ActionItemStatus
 from granola_bridge.models.database import get_session_factory
 from granola_bridge.services.action_extractor import ActionExtractor
 from granola_bridge.services.llm_client import LLMClient, LLMError
 from granola_bridge.services.trello_client import TrelloClient, TrelloError
+from granola_bridge.services.trello_helpers import format_card_description
 from granola_bridge.web.templates_helper import get_templates
 
 router = APIRouter(prefix="/upload")
@@ -84,7 +85,7 @@ async def process_upload(
                 status_code=303,
             )
 
-        # Create action items and Trello cards
+        # Create action items
         for item in extracted:
             action_item = ActionItem(
                 meeting_id=meeting.id,
@@ -97,23 +98,28 @@ async def process_upload(
             session.add(action_item)
             session.commit()
 
-            # Create Trello card
-            try:
-                description = _format_card_description(action_item, meeting)
-                card = await trello_client.create_card(
-                    name=action_item.title,
-                    desc=description,
-                )
-                action_item.trello_card_id = card["id"]
-                action_item.trello_card_url = card.get("shortUrl") or card.get("url")
-                action_item.status = ActionItemStatus.SENT
-            except TrelloError as e:
-                action_item.status = ActionItemStatus.FAILED
-                action_item.error_message = str(e)
+            # Only push to Trello immediately if auto_push is enabled
+            if config.trello.auto_push:
+                try:
+                    description = format_card_description(action_item, meeting)
+                    card = await trello_client.create_card(
+                        name=action_item.title,
+                        desc=description,
+                    )
+                    action_item.trello_card_id = card["id"]
+                    action_item.trello_card_url = card.get("shortUrl") or card.get("url")
+                    action_item.status = ActionItemStatus.SENT
+                except TrelloError as e:
+                    action_item.status = ActionItemStatus.FAILED
+                    action_item.error_message = str(e)
 
-            session.commit()
+                session.commit()
 
-        meeting.processed_at = datetime.utcnow()
+        if config.trello.auto_push:
+            meeting.status = MeetingStatus.PROCESSED
+            meeting.processed_at = datetime.utcnow()
+        else:
+            meeting.status = MeetingStatus.REVIEW
         session.commit()
 
         # Redirect to meeting detail page
@@ -135,20 +141,3 @@ async def process_upload(
         session.close()
 
 
-def _format_card_description(action_item: ActionItem, meeting: Meeting) -> str:
-    """Format the Trello card description."""
-    parts = []
-
-    if action_item.context:
-        parts.append(f"**Context:** {action_item.context}")
-
-    if action_item.description:
-        parts.append(f"\n{action_item.description}")
-
-    if action_item.assignee:
-        parts.append(f"\n**Assignee:** {action_item.assignee}")
-
-    parts.append(f"\n---\n*From meeting: {meeting.title}*")
-    parts.append(f"\n*Uploaded: {meeting.created_at.strftime('%Y-%m-%d %H:%M')}*")
-
-    return "\n".join(parts)

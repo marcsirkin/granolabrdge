@@ -26,6 +26,7 @@ from granola_bridge.services.action_extractor import ActionExtractor
 from granola_bridge.services.granola_parser import GranolaParser
 from granola_bridge.services.llm_client import LLMClient, LLMError
 from granola_bridge.services.trello_client import TrelloClient, TrelloError
+from granola_bridge.services.trello_helpers import format_card_description
 
 logger = logging.getLogger(__name__)
 
@@ -324,7 +325,7 @@ class Daemon:
 
         logger.info(f"Extracted {len(extracted)} action items")
 
-        # Create action items and Trello cards
+        # Create action items
         for item in extracted:
             try:
                 action_item = ActionItem(
@@ -338,19 +339,25 @@ class Daemon:
                 session.add(action_item)
                 session.commit()
 
-                # Create Trello card
-                await self._create_trello_card(session, action_item, meeting)
+                # Only push to Trello immediately if auto_push is enabled
+                if self.config.trello.auto_push:
+                    await self._create_trello_card(session, action_item, meeting)
             except Exception as e:
                 logger.error(f"Error processing action item '{item.title}': {e}")
                 session.rollback()
                 continue
 
-        # Mark meeting as processed
-        meeting.status = MeetingStatus.PROCESSED
-        meeting.processed_at = datetime.utcnow()
-        session.commit()
+        if self.config.trello.auto_push:
+            # Old behavior: mark as fully processed
+            meeting.status = MeetingStatus.PROCESSED
+            meeting.processed_at = datetime.utcnow()
+            logger.info(f"Meeting processed: {meeting.title}")
+        else:
+            # Hold for review
+            meeting.status = MeetingStatus.REVIEW
+            logger.info(f"Meeting awaiting review: {meeting.title}")
 
-        logger.info(f"Meeting processed: {meeting.title}")
+        session.commit()
 
     async def _create_trello_card(
         self,
@@ -403,23 +410,7 @@ class Daemon:
         meeting: Meeting,
     ) -> str:
         """Format the Trello card description."""
-        parts = []
-
-        if action_item.context:
-            parts.append(f"**Context:** {action_item.context}")
-
-        if action_item.description:
-            parts.append(f"\n{action_item.description}")
-
-        if action_item.assignee:
-            parts.append(f"\n**Assignee:** {action_item.assignee}")
-
-        parts.append(f"\n---\n*From meeting: {meeting.title}*")
-
-        if meeting.meeting_date:
-            parts.append(f"\n*Date: {meeting.meeting_date.strftime('%Y-%m-%d')}*")
-
-        return "\n".join(parts)
+        return format_card_description(action_item, meeting)
 
     async def _retry_trello_card(self, payload: dict) -> bool:
         """Retry handler for failed Trello card creation."""

@@ -18,6 +18,12 @@
         <div class="label">Total Meetings</div>
         <div class="value">{{ stats.total_meetings }}</div>
     </div>
+    {% if stats.needs_review > 0 %}
+    <div class="stat-card" style="border-left: 3px solid var(--primary);">
+        <div class="label">Needs Review</div>
+        <div class="value" style="color: var(--primary);">{{ stats.needs_review }}</div>
+    </div>
+    {% endif %}
     <div class="stat-card success">
         <div class="label">Cards Created</div>
         <div class="value">{{ stats.actions_sent }}</div>
@@ -77,10 +83,14 @@
                 </td>
                 <td>{{ meeting.created_at.strftime('%Y-%m-%d %H:%M') }}</td>
                 <td>
-                    {% if meeting.processed_at %}
+                    {% if meeting.status.value == 'processed' %}
                     <span class="badge badge-success">Processed</span>
+                    {% elif meeting.status.value == 'review' %}
+                    <a href="/meetings/{{ meeting.id }}"><span class="badge badge-review">Review</span></a>
+                    {% elif meeting.status.value == 'failed' %}
+                    <span class="badge badge-danger">Failed</span>
                     {% else %}
-                    <span class="badge badge-warning">Pending</span>
+                    <span class="badge badge-warning">{{ meeting.status.value|capitalize }}</span>
                     {% endif %}
                 </td>
             </tr>

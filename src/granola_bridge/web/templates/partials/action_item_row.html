@@ -1,0 +1,46 @@
+<div class="action-item {% if item.status.value == 'skipped' %}action-item-skipped{% endif %}" id="action-{{ item.id }}">
+    <div class="flex-between">
+        <div class="title {% if item.status.value == 'skipped' %}text-strikethrough{% endif %}">{{ item.title }}</div>
+        <div class="flex" style="gap: 0.5rem; align-items: center;">
+            {% if item.status.value == 'pending' %}
+            <button class="btn btn-approve btn-sm"
+                    hx-post="/meetings/{{ meeting.id }}/actions/{{ item.id }}/approve"
+                    hx-target="#action-{{ item.id }}"
+                    hx-swap="outerHTML"
+                    title="Send to Trello">&#x1f44d;</button>
+            <button class="btn btn-reject btn-sm"
+                    hx-post="/meetings/{{ meeting.id }}/actions/{{ item.id }}/reject"
+                    hx-target="#action-{{ item.id }}"
+                    hx-swap="outerHTML"
+                    title="Skip">&#x1f44e;</button>
+            {% endif %}
+            <span class="badge
+                {% if item.status.value == 'sent' %}badge-success
+                {% elif item.status.value == 'pending' %}badge-warning
+                {% elif item.status.value == 'failed' %}badge-danger
+                {% elif item.status.value == 'skipped' %}badge-skipped
+                {% else %}badge-info{% endif %}">
+                {{ item.status.value }}
+            </span>
+        </div>
+    </div>
+
+    {% if item.description %}
+    <p>{{ item.description }}</p>
+    {% endif %}
+
+    {% if item.context %}
+    <div class="context">{{ item.context }}</div>
+    {% endif %}
+
+    <div class="meta mt-2">
+        {% if item.assignee %}
+        <span><strong>Assignee:</strong> {{ item.assignee }}</span> &bull;
+        {% endif %}
+        {% if item.trello_card_url %}
+        <a href="{{ item.trello_card_url }}" target="_blank">View in Trello &rarr;</a>
+        {% elif item.error_message %}
+        <span style="color: var(--danger);">Error: {{ item.error_message[:100] }}</span>
+        {% endif %}
+    </div>
+</div>
