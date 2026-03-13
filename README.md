@@ -1,17 +1,20 @@
 # Granola Bridge
 
-A Python background daemon that monitors [Granola](https://granola.so) meeting transcripts, extracts action items via local LLM, and creates Trello cards automatically.
+A Python background daemon that monitors [Granola](https://granola.so) meeting transcripts, extracts action items via local LLM, and syncs approved items to Trello.
 
 ## Features
 
-- **Automatic monitoring**: Watches Granola's cache file for new meetings
+- **Automatic monitoring**: Watches Granola's cache file for new meetings (auto-detects latest version)
 - **Local LLM extraction**: Uses OpenAI-compatible APIs (LMStudio, Ollama) to extract action items
-- **Trello integration**: Creates cards with context from the meeting
+- **Action item review**: Approve or reject extracted action items before they become Trello cards
+- **Trello integration**: Creates cards with context from the meeting after review
+- **Semantic search**: Search across all meeting transcripts using Ollama embeddings (optional)
+- **Backlog handling**: Meetings captured while the app was offline can be reviewed and processed on demand
 - **Web dashboard**: View meetings, action items, and manage retries at localhost:8080
 - **Manual uploads**: Process voice memo transcripts or other meeting notes
 - **Retry queue**: Failed operations automatically retry with exponential backoff
 - **Notifications**: Daily summaries and failure alerts via Slack/Discord webhooks
-- **Auto-start on login**: launchd service starts automatically when you log in
+- **Auto-start on login**: launchd service or double-click `.command` file to start automatically
 - **LLM failure recovery**: Meetings are saved even if LLM is down; process them later with one click
 
 ## Requirements
@@ -120,14 +123,36 @@ granola-bridge init
 
 Access at http://localhost:8080 (default):
 
-- **Dashboard**: Overview of meetings and action items
+- **Dashboard**: Overview of meetings and action items; button to process any meetings the LLM missed
 - **Meetings**: List and detail views of all meetings
+- **Action Item Review**: On each meeting's detail page, approve (👍) or reject (👎) extracted action items — only approved items are sent to Trello
+- **Backlog**: Meetings captured while the app was offline appear as backlog; process or dismiss them from the meeting detail page
 - **Upload**: Manually upload transcripts for processing
 - **Search**: Semantic search across all meeting transcripts (requires Ollama)
 - **Retry Queue**: Monitor and manage failed operations
-- **Process Unprocessed**: If the LLM was unavailable when meetings were captured, click the "Process Unprocessed Meetings" button on the dashboard to extract action items once the LLM is back online
 
-### Service Management (macOS)
+### Starting the App
+
+Three ways to run Granola Bridge:
+
+**Double-click launcher** (simplest):
+```
+scripts/start-granola-bridge.command
+```
+Double-click this file in Finder to open a terminal and start the server.
+
+**macOS app bundle**:
+```
+scripts/GranolaBridge.app
+```
+Double-click to launch from Finder or add to your Dock.
+
+**launchd service** (runs automatically at login):
+```bash
+./scripts/install.sh
+```
+
+### Service Management (launchd)
 
 ```bash
 # Start service
@@ -198,12 +223,13 @@ embedding:
 2. **Deduplication**: New meetings are identified by their Granola ID and stored in SQLite
 3. **Embedding**: Transcript segments are stored and embedded via Ollama for RAG-based retrieval (if Ollama is available)
 4. **LLM Extraction**: Relevant transcript chunks are retrieved via RAG and sent to your local LLM to extract action items (falls back to chunk-based extraction if Ollama is unavailable)
-5. **Trello Cards**: Each action item becomes a card with:
+5. **Review**: Extracted action items enter a review state — approve or reject each one in the web UI
+6. **Trello Cards**: Each approved action item becomes a card with:
    - Title from the action item
    - Description with context from the meeting
    - Assignee if mentioned
    - Link back to the meeting
-6. **Retry Queue**: Failed operations are queued with exponential backoff
+7. **Retry Queue**: Failed operations are queued with exponential backoff
 
 ## Development
 
@@ -244,21 +270,25 @@ granola-to-trello/
 │   │   ├── action_extractor.py  # LLM prompt + response parsing
 │   │   └── embedding_service.py # Ollama embedding + ChromaDB
 │   ├── models/
-│   │   ├── database.py      # SQLAlchemy setup
-│   │   ├── meeting.py       # Meeting model
-│   │   ├── action_item.py   # ActionItem model
+│   │   ├── database.py          # SQLAlchemy setup
+│   │   ├── meeting.py           # Meeting model
+│   │   ├── action_item.py       # ActionItem model
 │   │   ├── transcript_segment.py # Transcript segment model
-│   │   └── retry_queue.py   # RetryQueue model
+│   │   └── retry_queue.py       # RetryQueue model
 │   └── web/
 │       ├── app.py           # FastAPI app
 │       ├── routes/
 │       │   ├── dashboard.py # Dashboard routes
-│       │   ├── meetings.py  # Meeting routes
-│       │   └── search.py    # Semantic search routes
+│       │   ├── meetings.py  # Meeting + action item review routes
+│       │   ├── search.py    # Semantic search routes
+│       │   ├── upload.py    # Manual transcript upload
+│       │   └── retry_queue.py # Retry queue routes
 │       └── templates/       # Jinja2 + HTMX templates
 ├── scripts/
-│   ├── install.sh           # Service installation
-│   └── uninstall.sh         # Service removal
+│   ├── GranolaBridge.app        # macOS app bundle
+│   ├── start-granola-bridge.command  # Double-click launcher
+│   ├── install.sh               # launchd service installation
+│   └── uninstall.sh             # launchd service removal
 ├── launchd/                 # macOS service config
 └── tests/
 ```
