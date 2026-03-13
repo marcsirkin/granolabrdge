@@ -20,6 +20,7 @@ A Python background daemon that monitors [Granola](https://granola.so) meeting t
 - [LMStudio](https://lmstudio.ai/) (or any OpenAI-compatible API) running locally
 - Trello account with API access
 - macOS (for launchd service management)
+- [Ollama](https://ollama.ai/) (optional, for semantic search and improved extraction)
 
 ## Quick Start
 
@@ -69,7 +70,13 @@ TRELLO_LIST_ID=your_list_id
 1. Open LMStudio and load a model (e.g., Llama 3, Mistral, etc.)
 2. Start the local server (default: http://localhost:1234)
 
-### 5. Initialize and run
+### 5. (Optional) Set up Ollama for semantic search
+
+1. Install Ollama: https://ollama.ai/
+2. Pull the embedding model: `ollama pull nomic-embed-text`
+3. Ollama runs automatically on port 11434. LM Studio (port 1234) and Ollama don't conflict.
+
+### 6. Initialize and run
 
 ```bash
 # Initialize database
@@ -82,7 +89,7 @@ granola-bridge run
 granola-bridge web
 ```
 
-### 6. Install as service (optional)
+### 7. Install as service (optional)
 
 ```bash
 ./scripts/install.sh
@@ -116,6 +123,7 @@ Access at http://localhost:8080 (default):
 - **Dashboard**: Overview of meetings and action items
 - **Meetings**: List and detail views of all meetings
 - **Upload**: Manually upload transcripts for processing
+- **Search**: Semantic search across all meeting transcripts (requires Ollama)
 - **Retry Queue**: Monitor and manage failed operations
 - **Process Unprocessed**: If the LLM was unavailable when meetings were captured, click the "Process Unprocessed Meetings" button on the dashboard to extract action items once the LLM is back online
 
@@ -141,7 +149,7 @@ tail -f ~/.granola-bridge/logs/daemon.log
 
 ```yaml
 granola:
-  cache_path: "~/Library/Application Support/Granola/cache-v3.json"
+  cache_path: "~/Library/Application Support/Granola/cache-v6.json"
   watch_debounce_ms: 500
 
 llm:
@@ -167,6 +175,11 @@ notifications:
 
 database:
   path: "~/.granola-bridge/bridge.db"
+
+embedding:
+  ollama_url: "http://localhost:11434"
+  model: "nomic-embed-text"
+  chroma_path: "~/.granola-bridge/chroma"
 ```
 
 ### Environment Variables
@@ -181,15 +194,16 @@ database:
 
 ## How It Works
 
-1. **File Watch**: The daemon monitors Granola's `cache-v3.json` file for changes
+1. **File Watch**: The daemon monitors Granola's cache file (auto-detects the latest `cache-vN.json` if the configured path doesn't exist)
 2. **Deduplication**: New meetings are identified by their Granola ID and stored in SQLite
-3. **LLM Extraction**: Transcripts are sent to your local LLM to extract action items
-4. **Trello Cards**: Each action item becomes a card with:
+3. **Embedding**: Transcript segments are stored and embedded via Ollama for RAG-based retrieval (if Ollama is available)
+4. **LLM Extraction**: Relevant transcript chunks are retrieved via RAG and sent to your local LLM to extract action items (falls back to chunk-based extraction if Ollama is unavailable)
+5. **Trello Cards**: Each action item becomes a card with:
    - Title from the action item
    - Description with context from the meeting
    - Assignee if mentioned
    - Link back to the meeting
-5. **Retry Queue**: Failed operations are queued with exponential backoff
+6. **Retry Queue**: Failed operations are queued with exponential backoff
 
 ## Development
 
@@ -224,18 +238,23 @@ granola-to-trello/
 │   │   ├── scheduler.py     # Retry queue processor
 │   │   └── notifier.py      # Webhook notifications
 │   ├── services/
-│   │   ├── granola_parser.py    # Parse cache-v3.json
+│   │   ├── granola_parser.py    # Parse Granola cache file (auto-detects latest version)
 │   │   ├── llm_client.py        # OpenAI-compatible API client
 │   │   ├── trello_client.py     # Trello API wrapper
-│   │   └── action_extractor.py  # LLM prompt + response parsing
+│   │   ├── action_extractor.py  # LLM prompt + response parsing
+│   │   └── embedding_service.py # Ollama embedding + ChromaDB
 │   ├── models/
 │   │   ├── database.py      # SQLAlchemy setup
 │   │   ├── meeting.py       # Meeting model
 │   │   ├── action_item.py   # ActionItem model
+│   │   ├── transcript_segment.py # Transcript segment model
 │   │   └── retry_queue.py   # RetryQueue model
 │   └── web/
 │       ├── app.py           # FastAPI app
-│       ├── routes/          # Dashboard routes
+│       ├── routes/
+│       │   ├── dashboard.py # Dashboard routes
+│       │   ├── meetings.py  # Meeting routes
+│       │   └── search.py    # Semantic search routes
 │       └── templates/       # Jinja2 + HTMX templates
 ├── scripts/
 │   ├── install.sh           # Service installation
@@ -269,6 +288,16 @@ granola-to-trello/
 - Check the LLM is responding (test with `curl http://localhost:1234/v1/models`)
 - Try a different/larger model for better extraction
 - View the daemon logs for LLM response details
+
+### Semantic search not working
+- Ensure Ollama is running: `curl http://localhost:11434/api/tags`
+- Verify the embedding model is pulled: `ollama pull nomic-embed-text`
+- Check the `embedding` section in your config.yaml
+
+### "Falling back to chunk-based extraction"
+- This is expected behavior when Ollama is unavailable
+- Action items will still be extracted using the standard chunk-based method
+- Install and start Ollama to enable RAG-enhanced extraction
 
 ## License
 

@@ -2,7 +2,7 @@
 
 granola:
   # Path to Granola's cache file
-  cache_path: "~/Library/Application Support/Granola/cache-v3.json"
+  cache_path: "~/Library/Application Support/Granola/cache-v6.json"
   # Debounce time for file watching (ms)
   watch_debounce_ms: 500
 
@@ -40,3 +40,13 @@ notifications:
 database:
   # SQLite database path
   path: "~/.granola-bridge/bridge.db"
+
+embedding:
+  # Ollama URL for generating embeddings (optional -- enhances extraction quality)
+  ollama_url: "http://localhost:11434"
+  # Embedding model (run: ollama pull nomic-embed-text)
+  model: "nomic-embed-text"
+  # ChromaDB storage path
+  chroma_path: "~/.granola-bridge/chroma"
+  # Automatically launch `ollama serve` if installed but not running
+  auto_start: true
