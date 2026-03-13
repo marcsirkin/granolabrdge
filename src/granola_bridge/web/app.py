@@ -4,7 +4,7 @@ from pathlib import Path
 
 from fastapi import FastAPI
 
-from granola_bridge.web.routes import dashboard, meetings, upload, retry_queue
+from granola_bridge.web.routes import dashboard, meetings, upload, retry_queue, search
 
 
 def create_app() -> FastAPI:
@@ -24,5 +24,6 @@ def create_app() -> FastAPI:
     app.include_router(meetings.router)
     app.include_router(upload.router)
     app.include_router(retry_queue.router)
+    app.include_router(search.router)
 
     return app

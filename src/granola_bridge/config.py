@@ -10,11 +10,12 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class GranolaConfig(BaseModel):
-    cache_path: str = "~/Library/Application Support/Granola/cache-v3.json"
+    cache_path: str = "~/Library/Application Support/Granola/cache-v6.json"
     watch_debounce_ms: int = 500
     min_transcript_length: int = 500       # Minimum chars for "complete" transcript
     stability_window_seconds: int = 30     # How long transcript must be unchanged
     max_wait_minutes: int = 10             # Don't wait forever for stabilization
+    backlog_threshold_hours: float = 1.0   # Meetings older than this are treated as backlog
 
 
 class LLMConfig(BaseModel):
@@ -47,6 +48,13 @@ class NotificationsConfig(BaseModel):
     daily_summary: DailySummaryConfig = Field(default_factory=DailySummaryConfig)
 
 
+class EmbeddingConfig(BaseModel):
+    ollama_url: str = "http://localhost:11434"
+    model: str = "nomic-embed-text"
+    chroma_path: str = "~/.granola-bridge/chroma"
+    auto_start: bool = True  # launch ollama serve if installed but not running
+
+
 class DatabaseConfig(BaseModel):
     path: str = "~/.granola-bridge/bridge.db"
 
@@ -72,6 +80,7 @@ class AppConfig(BaseModel):
     retry: RetryConfig = Field(default_factory=RetryConfig)
     web: WebConfig = Field(default_factory=WebConfig)
     notifications: NotificationsConfig = Field(default_factory=NotificationsConfig)
+    embedding: EmbeddingConfig = Field(default_factory=EmbeddingConfig)
     database: DatabaseConfig = Field(default_factory=DatabaseConfig)
 
     # Environment settings (secrets)
@@ -84,6 +93,10 @@ class AppConfig(BaseModel):
     def get_database_path(self) -> Path:
         """Get expanded database path."""
         return Path(self.database.path).expanduser()
+
+    def get_chroma_path(self) -> Path:
+        """Get expanded ChromaDB path."""
+        return Path(self.embedding.chroma_path).expanduser()
 
 
 def load_config(config_path: Optional[Path] = None) -> AppConfig:
@@ -122,6 +135,7 @@ def load_config(config_path: Optional[Path] = None) -> AppConfig:
         "retry": yaml_config.get("retry", {}),
         "web": yaml_config.get("web", {}),
         "notifications": yaml_config.get("notifications", {}),
+        "embedding": yaml_config.get("embedding", {}),
         "database": yaml_config.get("database", {}),
         "env": env_settings,
     }

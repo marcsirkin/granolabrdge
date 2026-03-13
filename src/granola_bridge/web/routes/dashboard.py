@@ -71,6 +71,15 @@ async def dashboard(request: Request):
             .count()
         )
 
+        # Backlog meetings (discovered while offline, awaiting user decision)
+        backlog_meetings = (
+            session.query(Meeting)
+            .filter(Meeting.status == MeetingStatus.BACKLOG)
+            .order_by(Meeting.meeting_date.desc())
+            .all()
+        )
+        backlog_count = len(backlog_meetings)
+
         # Unprocessed meetings (LLM was unavailable)
         unprocessed_count = (
             session.query(Meeting)
@@ -109,8 +118,10 @@ async def dashboard(request: Request):
                     "actions_failed": actions_failed,
                     "retry_pending": retry_pending,
                     "needs_review": needs_review,
+                    "backlog_count": backlog_count,
                     "unprocessed_count": unprocessed_count,
                 },
+                "backlog_meetings": backlog_meetings,
                 "recent_meetings": recent_meetings,
                 "failed_actions": failed_actions,
             },

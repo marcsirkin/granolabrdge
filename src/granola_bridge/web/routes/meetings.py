@@ -161,6 +161,36 @@ async def delete_meeting(meeting_id: str):
         session.close()
 
 
+@router.post("/{meeting_id}/process-backlog")
+async def process_backlog_meeting(meeting_id: str):
+    """Promote a BACKLOG meeting to READY so it enters the normal LLM pipeline."""
+    SessionLocal = get_session_factory()
+    session = SessionLocal()
+
+    try:
+        meeting = session.get(Meeting, meeting_id)
+
+        if not meeting:
+            return RedirectResponse(url="/meetings", status_code=303)
+
+        if meeting.status != MeetingStatus.BACKLOG:
+            return RedirectResponse(url=f"/meetings/{meeting_id}", status_code=303)
+
+        meeting.status = MeetingStatus.READY
+        session.commit()
+
+        logger.info(f"Backlog meeting promoted to READY: {meeting_id}")
+
+        return RedirectResponse(url=f"/meetings/{meeting_id}", status_code=303)
+
+    except Exception as e:
+        logger.error(f"Error promoting backlog meeting: {e}")
+        session.rollback()
+        return RedirectResponse(url=f"/meetings/{meeting_id}", status_code=303)
+    finally:
+        session.close()
+
+
 @router.post("/{meeting_id}/reprocess")
 async def reprocess_meeting(meeting_id: str):
     """Delete existing action items and re-queue for processing."""

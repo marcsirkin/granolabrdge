@@ -8,6 +8,13 @@ from typing import Optional
 
 from granola_bridge.services.llm_client import LLMClient, LLMError
 
+# Seed queries for RAG retrieval -- these pull action-relevant segments from ChromaDB
+RAG_SEED_QUERIES = [
+    "commitments, action items, follow-ups, deliverables",
+    "decisions, deadlines, next steps",
+    "send, schedule, prepare, review, share",
+]
+
 logger = logging.getLogger(__name__)
 
 # Note: Some local models work better with instructions in user message, not system
@@ -63,6 +70,117 @@ class ActionExtractor:
     def __init__(self, llm_client: LLMClient):
         self.llm = llm_client
 
+    async def extract_with_rag(
+        self,
+        meeting_title: str,
+        meeting_id: str,
+        embedding_service,
+        all_segments: list[dict],
+    ) -> list[ExtractedActionItem]:
+        """Extract action items using RAG: query ChromaDB for relevant segments, then send to LLM.
+
+        Args:
+            meeting_title: Title of the meeting
+            meeting_id: Database ID of the meeting
+            embedding_service: EmbeddingService instance
+            all_segments: All segments for this meeting (for context expansion)
+
+        Returns:
+            List of extracted action items
+        """
+        # Query ChromaDB with each seed query and collect unique segment indices
+        seen_indices: set[int] = set()
+        relevant_segments: list[dict] = []
+
+        for seed_query in RAG_SEED_QUERIES:
+            results = await embedding_service.query_async(
+                query_text=seed_query,
+                n_results=8,
+                meeting_id=meeting_id,
+            )
+            for r in results:
+                idx = r["metadata"].get("segment_index", -1)
+                if idx not in seen_indices:
+                    seen_indices.add(idx)
+                    relevant_segments.append(r)
+
+        if not relevant_segments:
+            logger.warning(f"RAG returned no segments for '{meeting_title}', falling back to chunk-based")
+            return []
+
+        # Build a segment index map from all_segments for context expansion
+        seg_by_index = {s["segment_index"]: s for s in all_segments}
+
+        # Expand with 1 segment before/after each hit for context
+        expanded_indices: set[int] = set()
+        for idx in seen_indices:
+            expanded_indices.add(idx - 1)
+            expanded_indices.add(idx)
+            expanded_indices.add(idx + 1)
+
+        # Assemble context in chronological order
+        context_segments = []
+        for idx in sorted(expanded_indices):
+            if idx in seg_by_index:
+                seg = seg_by_index[idx]
+                source_label = "[Remote] " if seg.get("source") == "system_audio" else ""
+                speaker = seg.get("speaker", "")
+                speaker_label = f"{speaker}: " if speaker else ""
+                context_segments.append(f"{source_label}{speaker_label}{seg['text']}")
+
+        context_text = "\n".join(context_segments)
+
+        # Truncate if excessively long (target ~3000 chars)
+        if len(context_text) > 4000:
+            context_text = context_text[:4000]
+
+        logger.info(
+            f"RAG extraction for '{meeting_title}': {len(seen_indices)} relevant segments, "
+            f"{len(context_text)} chars of context"
+        )
+
+        # Single LLM call with focused context
+        prompt = f"""Extract concrete commitments and deliverables from this meeting transcript.
+Only the most relevant portions are shown below.
+
+{MEETING_TYPE_GUIDANCE}
+
+Meeting: {meeting_title}
+
+TRANSCRIPT (relevant excerpts):
+{context_text}
+
+For each action item, assign a weight (1-5):
+- 5 = CRITICAL: Explicit commitment, clear owner, mentioned in wrap-up
+- 4 = IMPORTANT: Clear commitment with owner, concrete task
+- 3 = MODERATE: Likely action item but slightly vague
+- 2 = WEAK: Soft commitment, no clear owner
+- 1 = NOT REALLY: Suggestion without buy-in, question, status update
+
+Do NOT include:
+- Topics merely discussed or mentioned
+- Vague intentions ("look into", "think about", "explore")
+- Status updates or information shared
+
+Return ONLY a JSON array with 3-5 items maximum. Each item needs:
+- title: brief task description
+- description: what specifically needs to be done
+- assignee: person responsible (null if unclear)
+- context: the exact quote showing commitment
+- weight: importance score 1-5
+
+Return [] if no concrete commitments found.
+
+JSON array:"""
+
+        try:
+            response = await self.llm.complete(prompt, temperature=0.1)
+            items = self._parse_response(response)
+            return self._filter_by_importance(items)
+        except LLMError as e:
+            logger.error(f"RAG extraction failed: {e}")
+            raise
+
     async def extract(
         self, meeting_title: str, transcript: str
     ) -> list[ExtractedActionItem]:
@@ -93,9 +211,9 @@ class ActionExtractor:
         chunks = self._split_into_chunks(transcript, chunk_size, overlap)
 
         for i, chunk in enumerate(chunks):
-            logger.debug(f"Processing chunk {i+1}/{len(chunks)}")
             try:
                 items = await self._extract_from_chunk(meeting_title, chunk, chunk_num=i+1, total_chunks=len(chunks))
+                logger.info(f"Chunk {i+1}/{len(chunks)}: {len(items)} items, weights: {[item.weight for item in items]}")
                 all_items.extend(items)
             except LLMError as e:
                 logger.warning(f"Failed to process chunk {i+1}: {e}")
@@ -242,7 +360,7 @@ JSON array:"""
             return items
 
     def _filter_by_importance(
-        self, items: list[ExtractedActionItem], min_weight: int = 4, max_items: int = 5
+        self, items: list[ExtractedActionItem], min_weight: int = 3, max_items: int = 5
     ) -> list[ExtractedActionItem]:
         """Filter action items by importance weight and cap the total.
 
@@ -259,7 +377,7 @@ JSON array:"""
 
         # Filter by minimum weight
         filtered = [item for item in items if item.weight >= min_weight]
-        logger.debug(f"Filtered from {len(items)} to {len(filtered)} items (weight >= {min_weight})")
+        logger.info(f"Extraction: {len(items)} raw items → {len(filtered)} after weight filter (min={min_weight})")
 
         # Sort by weight descending, then by title for stability
         filtered.sort(key=lambda x: (-x.weight, x.title))
@@ -305,6 +423,7 @@ JSON array:"""
 
     def _parse_response(self, response: str) -> list[ExtractedActionItem]:
         """Parse LLM response into action items."""
+        logger.info(f"Raw LLM response ({len(response)} chars): {response[:500]}")
         # Try to extract JSON from the response
         json_str = self._extract_json(response)
 
@@ -312,7 +431,7 @@ JSON array:"""
             data = json.loads(json_str)
         except json.JSONDecodeError as e:
             logger.error(f"Failed to parse LLM response as JSON: {e}")
-            logger.debug(f"Response was: {response}")
+            logger.error(f"Response was: {response[:500]}")
             return []
 
         if not isinstance(data, list):
@@ -348,6 +467,9 @@ JSON array:"""
 
     def _extract_json(self, text: str) -> str:
         """Extract JSON array from text that may contain other content."""
+        # Strip <think>...</think> blocks (Qwen3 and similar reasoning models)
+        text = re.sub(r'<think>.*?</think>', '', text, flags=re.DOTALL).strip()
+
         # First try: the whole response is valid JSON
         text = text.strip()
         if text.startswith("[") and text.endswith("]"):

@@ -4,6 +4,7 @@ from granola_bridge.models.database import Base, get_engine, get_session, init_d
 from granola_bridge.models.meeting import Meeting, MeetingSource, MeetingStatus
 from granola_bridge.models.action_item import ActionItem, ActionItemStatus
 from granola_bridge.models.retry_queue import RetryQueue, RetryStatus, OperationType
+from granola_bridge.models.transcript_segment import TranscriptSegment
 
 __all__ = [
     "Base",
@@ -18,4 +19,5 @@ __all__ = [
     "RetryQueue",
     "RetryStatus",
     "OperationType",
+    "TranscriptSegment",
 ]

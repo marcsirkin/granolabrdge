@@ -29,7 +29,26 @@
 </div>
 {% endif %}
 
-{% if meeting.status.value == 'pending' %}
+{% if meeting.status.value == 'backlog' %}
+<div class="card" style="background-color: #f3f0ff; border-left: 4px solid #7c3aed;">
+    <div class="flex-between">
+        <div>
+            <strong>This meeting happened while the app was offline.</strong>
+            <br>Process it to extract action items, or dismiss it to ignore it.
+        </div>
+        <div style="display: flex; gap: 0.5rem; margin: 0;">
+            <form method="post" action="/meetings/{{ meeting.id }}/process-backlog" style="margin: 0;">
+                <button type="submit" class="btn btn-primary btn-sm">Process Meeting</button>
+            </form>
+            <form method="post" action="/meetings/{{ meeting.id }}/delete"
+                  onsubmit="return confirm('Dismiss this meeting? It will be permanently deleted.');"
+                  style="margin: 0;">
+                <button type="submit" class="btn btn-sm btn-danger">Dismiss</button>
+            </form>
+        </div>
+    </div>
+</div>
+{% elif meeting.status.value == 'pending' %}
 <div class="card" style="background-color: #fff3cd; border-left: 4px solid var(--warning);">
     <strong>Waiting for transcript.</strong> This meeting is waiting for the transcript to stabilize.
     <br>Processing will begin automatically once the transcript is complete.
@@ -84,6 +103,8 @@
         <span class="badge badge-warning">Ready</span>
         {% elif meeting.status.value == 'failed' %}
         <span class="badge badge-danger">Failed</span>
+        {% elif meeting.status.value == 'backlog' %}
+        <span class="badge badge-backlog">Backlog</span>
         {% else %}
         <span class="badge badge-warning">Pending</span>
         {% endif %}
@@ -117,6 +138,8 @@
         {% include "partials/action_item_row.html" %}
         {% endfor %}
     </div>
+    {% elif meeting.status.value == 'review' %}
+    <p style="color: #666;">No action items were extracted from this meeting. The transcript may not contain concrete commitments, or the LLM response could not be parsed. You can <strong>Reprocess</strong> to try again.</p>
     {% else %}
     <p>No action items found in this meeting.</p>
     {% endif %}

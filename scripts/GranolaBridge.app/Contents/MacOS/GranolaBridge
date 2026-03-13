@@ -1,0 +1,9 @@
+#!/bin/bash
+# Granola Bridge Launcher
+# This .app bundle opens Terminal and starts the server.
+
+osascript -e '
+tell application "Terminal"
+    activate
+    do script "bash -l -c '\''cd ~/projects/granola-to-trello && source venv/bin/activate && echo \"Starting Granola Bridge...\" && echo \"Dashboard: http://localhost:8080\" && echo \"Press Ctrl+C to stop.\" && echo \"\" && exec granola-bridge run'\''"
+end tell'

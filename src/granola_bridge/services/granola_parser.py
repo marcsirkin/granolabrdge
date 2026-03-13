@@ -1,4 +1,4 @@
-"""Parser for Granola's cache-v3.json file."""
+"""Parser for Granola's cache file (v3 and v4 formats)."""
 
 import json
 import logging
@@ -20,25 +20,36 @@ class GranolaMeeting:
     meeting_date: Optional[datetime]
     participants: list[str]
     meeting_end_count: int = 0  # 0 = in progress, 1+ = ended
+    raw_segments: list[dict] | None = None  # structured speaker turns when available
 
 
 class GranolaParser:
     """Parse and extract meetings from Granola's cache file.
 
-    Granola cache-v3.json structure:
-    {
-        "cache": "{\"state\": {\"documents\": {...}, \"transcripts\": {...}, ...}}"
-    }
+    Supported formats:
+    - v3: {"cache": "<JSON_STRING>"}  where JSON_STRING contains {"state": {...}}
+    - v4: {"cache": {"state": {...}, "version": ...}}
 
-    The cache value is a JSON string that needs to be parsed again.
-    - documents: dict of meeting documents keyed by ID
-    - transcripts: dict of transcript segment lists keyed by document ID
+    In both cases, state.documents is a dict of meeting docs keyed by ID,
+    and state.transcripts is a dict of transcript segment lists keyed by doc ID.
     """
 
     def __init__(self, cache_path: Path):
-        self.cache_path = cache_path
+        self.cache_path = self._resolve_cache_path(cache_path)
         self._last_modified: Optional[float] = None
         self._known_ids: set[str] = set()
+
+    @staticmethod
+    def _resolve_cache_path(configured: Path) -> Path:
+        """Use configured path if it exists; otherwise find the highest-versioned cache-vN.json."""
+        if configured.exists():
+            return configured
+        granola_dir = configured.parent
+        candidates = sorted(granola_dir.glob("cache-v*.json"), reverse=True)
+        if candidates:
+            logger.info(f"Configured cache not found ({configured.name}); using {candidates[0].name}")
+            return candidates[0]
+        return configured  # fall through; original missing-file warning still fires
 
     def has_changes(self) -> bool:
         """Check if the cache file has been modified."""
@@ -87,17 +98,24 @@ class GranolaParser:
         return meetings
 
     def _extract_state(self, data: dict) -> Optional[dict]:
-        """Extract the state object from Granola's cache structure."""
-        # Granola stores cache as: {"cache": "<JSON_STRING>"}
+        """Extract the state object from Granola's cache structure.
+
+        v3: {"cache": "<JSON_STRING>"}  where JSON_STRING contains {"state": {...}}
+        v4: {"cache": {"state": {...}, "version": ...}}
+        """
         if isinstance(data, dict) and "cache" in data:
-            cache_str = data["cache"]
-            if isinstance(cache_str, str):
+            cache_val = data["cache"]
+            if isinstance(cache_val, str):
+                # v3: double-encoded JSON string
                 try:
-                    inner = json.loads(cache_str)
+                    inner = json.loads(cache_val)
                     return inner.get("state", {})
                 except json.JSONDecodeError as e:
                     logger.error(f"Failed to parse inner cache JSON: {e}")
                     return None
+            elif isinstance(cache_val, dict):
+                # v4: cache is already a parsed dict
+                return cache_val.get("state", {})
 
         # Fallback: maybe it's already unwrapped
         if isinstance(data, dict) and "state" in data:
@@ -138,6 +156,68 @@ class GranolaParser:
                 return meeting
         return None
 
+    def get_structured_segments(self, doc_id: str, raw_segments: list) -> list[dict]:
+        """Group adjacent transcript segments from the same source into speaker turns.
+
+        Args:
+            doc_id: Document ID (for logging)
+            raw_segments: List of segment dicts from Granola's transcript data
+
+        Returns:
+            List of dicts with speaker, source, text, start_timestamp, end_timestamp, segment_index
+        """
+        if not raw_segments:
+            return []
+
+        # Sort by start_timestamp
+        try:
+            sorted_segs = sorted(
+                raw_segments,
+                key=lambda s: s.get("start_timestamp", "") if isinstance(s, dict) else "",
+            )
+        except Exception:
+            sorted_segs = raw_segments
+
+        turns: list[dict] = []
+        current_turn: dict | None = None
+
+        for seg in sorted_segs:
+            if not isinstance(seg, dict):
+                continue
+            text = seg.get("text", "").strip()
+            if not text:
+                continue
+
+            source = seg.get("source", "")
+            speaker = seg.get("speaker", "")
+
+            if current_turn and current_turn["source"] == source and current_turn["speaker"] == speaker:
+                # Same speaker/source -- merge into current turn
+                current_turn["text"] += " " + text
+                current_turn["end_timestamp"] = seg.get("end_timestamp", current_turn["end_timestamp"])
+            else:
+                # New turn
+                if current_turn:
+                    turns.append(current_turn)
+                current_turn = {
+                    "speaker": speaker,
+                    "source": source,
+                    "text": text,
+                    "start_timestamp": seg.get("start_timestamp", ""),
+                    "end_timestamp": seg.get("end_timestamp", ""),
+                    "segment_index": len(turns),
+                }
+
+        if current_turn:
+            turns.append(current_turn)
+
+        # Fix up segment_index after appending
+        for i, turn in enumerate(turns):
+            turn["segment_index"] = i
+
+        logger.debug(f"Document {doc_id}: grouped {len(raw_segments)} segments into {len(turns)} speaker turns")
+        return turns
+
     def _parse_document(self, doc: dict, transcripts: dict) -> Optional[GranolaMeeting]:
         """Parse a single document into a meeting."""
         try:
@@ -164,6 +244,13 @@ class GranolaParser:
             if not isinstance(meeting_end_count, int):
                 meeting_end_count = 0
 
+            # Extract structured segments if raw transcript data is available
+            raw_segments = None
+            if doc_id in transcripts:
+                segs = transcripts[doc_id]
+                if isinstance(segs, list) and segs:
+                    raw_segments = self.get_structured_segments(doc_id, segs)
+
             return GranolaMeeting(
                 granola_id=str(doc_id),
                 title=title,
@@ -171,6 +258,7 @@ class GranolaParser:
                 meeting_date=meeting_date,
                 participants=participants,
                 meeting_end_count=meeting_end_count,
+                raw_segments=raw_segments,
             )
 
         except Exception as e:

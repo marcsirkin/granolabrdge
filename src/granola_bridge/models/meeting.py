@@ -13,6 +13,7 @@ from granola_bridge.models.database import Base
 
 if TYPE_CHECKING:
     from granola_bridge.models.action_item import ActionItem
+    from granola_bridge.models.transcript_segment import TranscriptSegment
 
 
 class MeetingSource(str, enum.Enum):
@@ -22,6 +23,7 @@ class MeetingSource(str, enum.Enum):
 
 class MeetingStatus(str, enum.Enum):
     PENDING = "pending"        # Waiting for transcript to stabilize
+    BACKLOG = "backlog"        # Old meeting discovered while offline; awaiting user decision
     READY = "ready"            # Ready for LLM extraction
     PROCESSING = "processing"  # Currently being processed
     REVIEW = "review"          # Items extracted, awaiting user review
@@ -59,9 +61,12 @@ class Meeting(Base):
     stable_since: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
-    # Relationship to action items
+    # Relationships
     action_items: Mapped[List["ActionItem"]] = relationship(
         "ActionItem", back_populates="meeting", cascade="all, delete-orphan"
+    )
+    segments: Mapped[List["TranscriptSegment"]] = relationship(
+        "TranscriptSegment", back_populates="meeting", cascade="all, delete-orphan"
     )
 
     def __repr__(self) -> str:

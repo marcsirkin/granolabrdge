@@ -41,10 +41,14 @@
                     <span class="badge badge-success">Processed</span>
                     {% elif item.meeting.status.value == 'processing' %}
                     <span class="badge badge-info">Processing</span>
+                    {% elif item.meeting.status.value == 'review' %}
+                    <a href="/meetings/{{ item.meeting.id }}"><span class="badge badge-review">Review</span></a>
                     {% elif item.meeting.status.value == 'ready' %}
                     <span class="badge badge-warning">Ready</span>
                     {% elif item.meeting.status.value == 'failed' %}
                     <span class="badge badge-danger">Failed</span>
+                    {% elif item.meeting.status.value == 'backlog' %}
+                    <span class="badge badge-backlog">Backlog</span>
                     {% else %}
                     <span class="badge badge-warning">Pending</span>
                     {% endif %}

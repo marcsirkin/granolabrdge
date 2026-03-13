@@ -1,0 +1,59 @@
+{% extends "base.html" %}
+
+{% block title %}Search - Granola Bridge{% endblock %}
+
+{% block content %}
+<h1>Search Meetings</h1>
+
+<div class="card">
+    <form method="get" action="/search" style="flex-direction: row; align-items: flex-end;">
+        <div style="flex: 1;">
+            <label for="q">Semantic search across all meeting transcripts</label>
+            <input type="text" id="q" name="q" value="{{ query }}"
+                   placeholder="e.g. budget decisions, follow-up commitments, API migration..."
+                   autofocus>
+        </div>
+        <button type="submit" class="btn btn-primary" style="height: fit-content;">Search</button>
+    </form>
+</div>
+
+{% if error %}
+<div class="error">{{ error }}</div>
+{% endif %}
+
+{% if query and not results and not error %}
+<div class="card">
+    <p>No results found for "{{ query }}".</p>
+</div>
+{% endif %}
+
+{% for group in results %}
+<div class="card">
+    <div class="flex-between mb-1">
+        <h3>
+            <a href="/meetings/{{ group.meeting_id }}">{{ group.meeting_title }}</a>
+        </h3>
+        {% if group.meeting_date %}
+        <span style="color: var(--gray-500); font-size: 0.875rem;">
+            {{ group.meeting_date.strftime('%b %d, %Y') }}
+        </span>
+        {% endif %}
+    </div>
+
+    {% for seg in group.segments %}
+    <div style="padding: 0.5rem 0; border-top: 1px solid var(--gray-100);">
+        <div style="display: flex; justify-content: space-between; margin-bottom: 0.25rem;">
+            <span style="font-size: 0.75rem; color: var(--gray-500);">
+                {% if seg.speaker %}{{ seg.speaker }}{% endif %}
+                {% if seg.source == "system_audio" %}<span class="badge badge-info">Remote</span>{% endif %}
+            </span>
+            <span style="font-size: 0.75rem; color: var(--gray-500);">
+                similarity: {{ "%.1f"|format((1 - seg.distance) * 100) }}%
+            </span>
+        </div>
+        <p style="font-size: 0.875rem;">{{ seg.text }}</p>
+    </div>
+    {% endfor %}
+</div>
+{% endfor %}
+{% endblock %}

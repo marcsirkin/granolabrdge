@@ -4,7 +4,7 @@ import os
 from pathlib import Path
 from typing import Generator
 
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, text
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
 from granola_bridge.config import get_config
@@ -56,9 +56,31 @@ def get_session() -> Generator[Session, None, None]:
         session.close()
 
 
+def _run_migrations(engine) -> None:
+    """Run database migrations to add missing columns."""
+    migrations = [
+        # Add error_message column to meetings table
+        ("meetings", "error_message", "ALTER TABLE meetings ADD COLUMN error_message TEXT"),
+    ]
+
+    with engine.connect() as conn:
+        for table_name, column_name, sql in migrations:
+            # Check if column exists
+            result = conn.execute(text(f"PRAGMA table_info({table_name})"))
+            columns = [row[1] for row in result.fetchall()]
+
+            if column_name not in columns:
+                conn.execute(text(sql))
+                conn.commit()
+
+
 def init_db() -> None:
     """Initialize database tables."""
     # Import models to register them
-    from granola_bridge.models import meeting, action_item, retry_queue  # noqa: F401
+    from granola_bridge.models import meeting, action_item, retry_queue, transcript_segment  # noqa: F401
 
-    Base.metadata.create_all(bind=get_engine())
+    engine = get_engine()
+    Base.metadata.create_all(bind=engine)
+
+    # Run migrations for existing databases
+    _run_migrations(engine)

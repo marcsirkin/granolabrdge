@@ -24,6 +24,12 @@
         <div class="value" style="color: var(--primary);">{{ stats.needs_review }}</div>
     </div>
     {% endif %}
+    {% if stats.backlog_count > 0 %}
+    <div class="stat-card" style="border-left: 3px solid #7c3aed;">
+        <div class="label">In Backlog</div>
+        <div class="value" style="color: #7c3aed;">{{ stats.backlog_count }}</div>
+    </div>
+    {% endif %}
     <div class="stat-card success">
         <div class="label">Cards Created</div>
         <div class="value">{{ stats.actions_sent }}</div>
@@ -37,6 +43,44 @@
         <div class="value">{{ stats.actions_failed }}</div>
     </div>
 </div>
+
+{% if backlog_meetings %}
+<div class="card">
+    <h3 style="color: #7c3aed; margin-bottom: 0.75rem;">Backlog Meetings</h3>
+    <p style="margin-bottom: 1rem;">These meetings happened while the app was offline. Process each one to extract action items, or dismiss to ignore.</p>
+    <table>
+        <thead>
+            <tr>
+                <th>Title</th>
+                <th>Meeting Date</th>
+                <th>Actions</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for meeting in backlog_meetings %}
+            <tr>
+                <td>
+                    <a href="/meetings/{{ meeting.id }}">
+                        {{ meeting.title[:60] }}{% if meeting.title|length > 60 %}...{% endif %}
+                    </a>
+                </td>
+                <td>{{ meeting.meeting_date.strftime('%Y-%m-%d %H:%M') if meeting.meeting_date else '—' }}</td>
+                <td style="display: flex; gap: 0.5rem;">
+                    <form method="post" action="/meetings/{{ meeting.id }}/process-backlog" style="margin: 0;">
+                        <button type="submit" class="btn btn-sm btn-primary">Process</button>
+                    </form>
+                    <form method="post" action="/meetings/{{ meeting.id }}/delete"
+                          onsubmit="return confirm('Dismiss this meeting? It will be permanently deleted.');"
+                          style="margin: 0;">
+                        <button type="submit" class="btn btn-sm btn-danger">Dismiss</button>
+                    </form>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endif %}
 
 {% if stats.unprocessed_count > 0 %}
 <div class="card">

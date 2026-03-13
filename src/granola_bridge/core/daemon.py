@@ -2,7 +2,7 @@
 
 import asyncio
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Optional
 
 from sqlalchemy.orm import Session
@@ -19,10 +19,12 @@ from granola_bridge.models import (
     MeetingStatus,
     OperationType,
     RetryQueue,
+    TranscriptSegment,
 )
 from granola_bridge.models.meeting import compute_transcript_hash
 from granola_bridge.models.database import get_session_factory
 from granola_bridge.services.action_extractor import ActionExtractor
+from granola_bridge.services.embedding_service import EmbeddingService
 from granola_bridge.services.granola_parser import GranolaParser
 from granola_bridge.services.llm_client import LLMClient, LLMError
 from granola_bridge.services.trello_client import TrelloClient, TrelloError
@@ -45,6 +47,7 @@ class Daemon:
         self.llm_client = LLMClient(config)
         self.trello_client = TrelloClient(config)
         self.extractor = ActionExtractor(self.llm_client)
+        self.embedding_service = EmbeddingService(config)
         self.notifier = Notifier(config)
         self.scheduler = RetryScheduler(config)
 
@@ -153,9 +156,18 @@ class Daemon:
             # Get new meetings from Granola
             new_meetings = self.parser.get_new_meetings(known_ids)
 
+            backlog_threshold = timedelta(hours=self.config.granola.backlog_threshold_hours)
+
             for meeting_data in new_meetings:
                 now = datetime.utcnow()
                 transcript_hash = compute_transcript_hash(meeting_data.transcript)
+
+                # Classify as BACKLOG if the meeting ended more than threshold hours ago
+                status = MeetingStatus.PENDING
+                if meeting_data.meeting_end_count > 0 and meeting_data.meeting_date:
+                    age = now - meeting_data.meeting_date
+                    if age > backlog_threshold:
+                        status = MeetingStatus.BACKLOG
 
                 meeting = Meeting(
                     granola_id=meeting_data.granola_id,
@@ -163,13 +175,29 @@ class Daemon:
                     transcript=meeting_data.transcript,
                     meeting_date=meeting_data.meeting_date,
                     source=MeetingSource.GRANOLA,
-                    status=MeetingStatus.PENDING,
+                    status=status,
                     transcript_hash=transcript_hash,
                     first_seen_at=now,
                     stable_since=now,
                 )
                 session.add(meeting)
-                logger.info(f"Detected new meeting (PENDING): {meeting_data.title}")
+                session.flush()  # get meeting.id for FK
+
+                # Store structured transcript segments if available
+                if meeting_data.raw_segments:
+                    for seg in meeting_data.raw_segments:
+                        segment = TranscriptSegment(
+                            meeting_id=meeting.id,
+                            segment_index=seg["segment_index"],
+                            speaker=seg.get("speaker"),
+                            source=seg.get("source"),
+                            text=seg["text"],
+                            start_timestamp=seg.get("start_timestamp"),
+                            end_timestamp=seg.get("end_timestamp"),
+                        )
+                        session.add(segment)
+
+                logger.info(f"Detected new meeting ({status.value.upper()}): {meeting_data.title}")
 
             session.commit()
 
@@ -185,7 +213,7 @@ class Daemon:
         session = SessionLocal()
 
         try:
-            # Get all pending meetings
+            # Get all pending meetings (BACKLOG meetings are excluded — user decides)
             pending_meetings = (
                 session.query(Meeting)
                 .filter(Meeting.status == MeetingStatus.PENDING)
@@ -300,12 +328,62 @@ class Daemon:
         meeting.status = MeetingStatus.PROCESSING
         session.commit()
 
+        # Try RAG extraction if embeddings are available
+        use_rag = False
+        segments_data = []
+
+        # Load segments from DB
+        db_segments = (
+            session.query(TranscriptSegment)
+            .filter(TranscriptSegment.meeting_id == meeting.id)
+            .order_by(TranscriptSegment.segment_index)
+            .all()
+        )
+
+        if db_segments and await self.embedding_service.is_available():
+            segments_data = [
+                {
+                    "segment_index": s.segment_index,
+                    "speaker": s.speaker or "",
+                    "source": s.source or "",
+                    "text": s.text,
+                    "start_timestamp": s.start_timestamp or "",
+                    "end_timestamp": s.end_timestamp or "",
+                }
+                for s in db_segments
+            ]
+
+            # Embed segments (idempotent -- deletes existing first)
+            try:
+                embedded = await self.embedding_service.embed_meeting_segments(
+                    meeting.id, segments_data
+                )
+                if embedded > 0:
+                    use_rag = True
+                    logger.info(f"Embedded {embedded} segments for '{meeting.title}'")
+            except Exception as e:
+                logger.warning(f"Embedding failed, falling back to chunk-based: {e}")
+
         # Extract action items
         try:
-            extracted = await self.extractor.extract(
-                meeting.title,
-                meeting.transcript,
-            )
+            if use_rag:
+                logger.info(f"Using RAG extraction for '{meeting.title}'")
+                extracted = await self.extractor.extract_with_rag(
+                    meeting.title,
+                    meeting.id,
+                    self.embedding_service,
+                    segments_data,
+                )
+                # Fall back to chunk-based if RAG returned nothing
+                if not extracted:
+                    logger.info(f"RAG returned no items, falling back to chunk-based for '{meeting.title}'")
+                    use_rag = False
+
+            if not use_rag:
+                extracted = await self.extractor.extract(
+                    meeting.title,
+                    meeting.transcript,
+                )
         except LLMError as e:
             logger.error(f"LLM extraction failed: {e}")
             meeting.status = MeetingStatus.FAILED
